@@ -2,6 +2,7 @@ package types
 
 import "encoding/hex"
 
+// Hash is a type that represents the hash of a block or transaction.
 type Hash [32]byte
 
 func BytesToHash(b []byte) Hash {
