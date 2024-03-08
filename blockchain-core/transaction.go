@@ -1,26 +1,34 @@
 package core
 
 import (
-	"encoding/binary"
-	"io"
+	"fmt"
+
+	crypto "github.com/AzlanAmjad/DreamscapeCanvas-Blockchain/cryptography"
 )
 
 type Transaction struct {
 	Data []byte
+
+	PublicKey crypto.PublicKey
+	Signature *crypto.Signature
 }
 
-func (tx *Transaction) BinaryEncode(w io.Writer) error {
-	err := binary.Write(w, binary.LittleEndian, &tx.Data)
+func (t *Transaction) Sign(privateKey *crypto.PrivateKey) error {
+	signature, err := privateKey.Sign(t.Data)
 	if err != nil {
 		return err
 	}
+
+	t.Signature = signature
+	t.PublicKey = privateKey.GetPublicKey()
+
 	return nil
 }
 
-func (tx *Transaction) BinaryDecode(r io.Reader) error {
-	err := binary.Read(r, binary.LittleEndian, &tx.Data)
-	if err != nil {
-		return err
+func (t *Transaction) VerifySignature() (bool, error) {
+	if t.Signature == nil {
+		return false, fmt.Errorf("no signature to verify")
 	}
-	return nil
+
+	return t.PublicKey.Verify(t.Data, t.Signature), nil
 }
