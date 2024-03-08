@@ -51,7 +51,6 @@ func (t *LocalTransport) SendMessageToPeer(rpc SendRPC) error {
 	t.Lock.RLock()
 	defer t.Lock.RUnlock()
 	if peer, ok := t.Peers[rpc.To]; ok {
-		fmt.Println("Sent message to", rpc.To)
 		peer.SendToChannel(ReceiveRPC{From: t.GetAddr(), Payload: rpc.Payload})
 	} else {
 		return fmt.Errorf("peer %s not found", rpc.To)
