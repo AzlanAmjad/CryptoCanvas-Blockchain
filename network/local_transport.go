@@ -5,7 +5,13 @@ import (
 	"sync"
 )
 
-// Implement the Transport interface here
+/*
+Implement the Transport interface here
+LocalTransport is a transport that is used for communication between modules in the same process.
+LocalTransport is not going over the network (TCP or UDP), like other transports might, it is just
+sending messages to a channel within the same process.
+*/
+
 type LocalTransport struct {
 	Addr      NetAddr
 	Peers     map[NetAddr]Transport
@@ -45,8 +51,8 @@ func (t *LocalTransport) SendMessageToPeer(rpc SendRPC) error {
 	t.Lock.RLock()
 	defer t.Lock.RUnlock()
 	if peer, ok := t.Peers[rpc.To]; ok {
-		peer.SendToChannel(ReceiveRPC{From: t.GetAddr(), Payload: rpc.Payload})
 		fmt.Println("Sent message to", rpc.To)
+		peer.SendToChannel(ReceiveRPC{From: t.GetAddr(), Payload: rpc.Payload})
 	} else {
 		return fmt.Errorf("peer %s not found", rpc.To)
 	}
