@@ -8,3 +8,6 @@ run: build
 
 test:
 	go test -race ./...
+
+test-verbose:
+	go test -v -race ./...

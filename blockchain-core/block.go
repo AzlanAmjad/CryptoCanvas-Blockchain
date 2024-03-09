@@ -19,25 +19,41 @@ type BlockHeader struct {
 	Index         uint32
 }
 
+// GetBytes returns the bytes of the block header.
+func (bh *BlockHeader) GetBytes() []byte {
+	buf := &bytes.Buffer{}
+	encoder := gob.NewEncoder(buf)
+	err := encoder.Encode(bh)
+	if err != nil {
+		panic(err)
+	}
+	return buf.Bytes()
+}
+
 // Block is a block in the blockchain.
 type Block struct {
 	Header       *BlockHeader
 	Transactions []*Transaction
-	PublicKey    crypto.PublicKey
+	Validator    crypto.PublicKey
 	Signature    *crypto.Signature
 
 	// cached block header hash
 	hash types.Hash
 }
 
+// Add transaction to block
+func (b *Block) AddTransaction(tx *Transaction) {
+	b.Transactions = append(b.Transactions, tx)
+}
+
 // Sign the block with a private key.
 func (b *Block) Sign(privateKey *crypto.PrivateKey) error {
-	signature, err := privateKey.Sign(b.GetHeaderBytes())
+	signature, err := privateKey.Sign(b.Header.GetBytes())
 	if err != nil {
 		return err
 	}
 
-	b.PublicKey = privateKey.GetPublicKey()
+	b.Validator = privateKey.GetPublicKey()
 	b.Signature = signature
 
 	return nil
@@ -49,7 +65,15 @@ func (b *Block) VerifySignature() (bool, error) {
 		return false, fmt.Errorf("no signature to verify")
 	}
 
-	return b.PublicKey.Verify(b.GetHeaderBytes(), b.Signature), nil
+	// Verify the block transactions
+	for _, tx := range b.Transactions {
+		if valid, err := tx.VerifySignature(); !valid {
+			return false, err
+		}
+	}
+
+	// Verify the block signature
+	return b.Validator.Verify(b.Header.GetBytes(), b.Signature), nil
 }
 
 // Decode decodes a block from a reader, in a modular fashion.
@@ -62,22 +86,11 @@ func (b *Block) Encode(w io.Writer, enc Encoder[*Block]) error {
 	return enc.Encode(w, b)
 }
 
-func (b *Block) GetHash(hasher Hasher[*Block]) types.Hash {
+func (b *Block) GetHash(hasher Hasher[*BlockHeader]) types.Hash {
 	// if the hash is already cached, return it
 	if !b.hash.IsZero() {
 		return b.hash
 	}
 
-	return hasher.Hash(b)
-}
-
-// GetHeaderBytes returns the bytes of the block header.
-func (b *Block) GetHeaderBytes() []byte {
-	buf := &bytes.Buffer{}
-	encoder := gob.NewEncoder(buf)
-	err := encoder.Encode(b.Header)
-	if err != nil {
-		panic(err)
-	}
-	return buf.Bytes()
+	return hasher.Hash(b.Header)
 }

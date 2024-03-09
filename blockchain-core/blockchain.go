@@ -1,6 +1,10 @@
 package core
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/sirupsen/logrus"
+)
 
 type Blockchain struct {
 	BlockHeaders []*BlockHeader
@@ -9,6 +13,8 @@ type Blockchain struct {
 	// block encoder and decoder
 	Encoder Encoder[*Block]
 	Decoder Decoder[*Block]
+	// block header hasher
+	BlockHeaderHasher Hasher[*BlockHeader]
 }
 
 // NewBlockchain creates a new empty blockchain. With the default block validator.
@@ -17,26 +23,32 @@ func NewBlockchain(storage Storage, genesis *Block) (*Blockchain, error) {
 		BlockHeaders: make([]*BlockHeader, 0),
 		Storage:      storage,
 	}
+	// add default block encoder and decoder
+	bc.Encoder = NewBlockEncoder()
+	bc.Decoder = NewBlockDecoder()
+	// add default block hasher
+	bc.BlockHeaderHasher = NewBlockHeaderHasher()
 	// set the default block validator
 	bc.SetValidator(NewBlockValidator(bc))
 	// add the genesis block to the blockchain
 	err := bc.addBlockWithoutValidation(genesis)
-	// add default block encoder and decoder
-	bc.Encoder = NewBlockEncoder()
-	bc.Decoder = NewBlockDecoder()
-
 	return bc, err
 }
 
 // addBlockWithoutValidation adds a block to the blockchain without validation.
-func (bc *Blockchain) addBlockWithoutValidation(genesis *Block) error {
-	// add the genesis block to the storage
-	err := bc.Storage.Put(genesis, bc.Encoder)
+func (bc *Blockchain) addBlockWithoutValidation(block *Block) error {
+	logrus.WithFields(logrus.Fields{
+		"block_index": block.Header.Index,
+		"block_hash":  block.GetHash(bc.BlockHeaderHasher),
+	}).Log(logrus.InfoLevel, "adding block to the blockchain")
+
+	// add the block to the storage
+	err := bc.Storage.Put(block, bc.Encoder)
 	if err != nil {
 		panic(err)
 	}
-	// add the genesis block to the blockchain headers.
-	bc.BlockHeaders = append(bc.BlockHeaders, genesis.Header)
+	// add the block to the blockchain headers.
+	bc.BlockHeaders = append(bc.BlockHeaders, block.Header)
 	return err
 }
 
@@ -77,4 +89,12 @@ func (bc *Blockchain) AddBlock(block *Block) error {
 // HasBlock function compares the index of the block with the height of the blockchain.
 func (bc *Blockchain) HasBlock(block *Block) bool {
 	return block.Header.Index <= bc.GetHeight()
+}
+
+// GetHeaderByIndex returns header by block index
+func (bc *Blockchain) GetHeaderByIndex(index uint32) (*BlockHeader, error) {
+	if index > bc.GetHeight() {
+		return nil, fmt.Errorf("block index is invalid, block index: %d, blockchain height: %d", index, bc.GetHeight())
+	}
+	return bc.BlockHeaders[index], nil
 }

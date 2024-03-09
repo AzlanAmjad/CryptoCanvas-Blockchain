@@ -113,7 +113,7 @@ func TestTransactionSignAndVerifyFailInvalidPublicKey(t *testing.T) {
 
 	// Modify the public key.
 	otherPrivKey := crypto.GeneratePrivateKey()
-	transaction.PublicKey = otherPrivKey.GetPublicKey()
+	transaction.From = otherPrivKey.GetPublicKey()
 
 	// Verify the signature.
 	verified, err := transaction.VerifySignature()

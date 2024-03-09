@@ -4,7 +4,11 @@ go 1.22.0
 
 require github.com/stretchr/testify v1.9.0
 
-require github.com/golang/snappy v0.0.0-20180518054509-2e65f85255db // indirect
+require (
+	github.com/golang/snappy v0.0.0-20180518054509-2e65f85255db // indirect
+	github.com/sirupsen/logrus v1.9.3 // indirect
+	golang.org/x/sys v0.18.0 // indirect
+)
 
 require (
 	github.com/davecgh/go-spew v1.1.1 // indirect

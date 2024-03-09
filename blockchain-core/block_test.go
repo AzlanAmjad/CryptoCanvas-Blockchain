@@ -10,11 +10,11 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func getRandomBlock(index uint32) *Block {
+func getRandomBlock(t *testing.T, index uint32, prevBlockHash types.Hash) *Block {
 	// create a new block
 	bh := &BlockHeader{
 		Version:       1,
-		PrevBlockHash: types.Hash{0x01, 0x02, 0x03},
+		PrevBlockHash: prevBlockHash,
 		MerkleRoot:    types.Hash{0x04, 0x05, 0x06},
 		Timestamp:     time.Now().UnixNano(),
 		Index:         index,
@@ -23,12 +23,13 @@ func getRandomBlock(index uint32) *Block {
 		Header:       bh,
 		Transactions: []*Transaction{},
 	}
+	assert.NotNil(t, b)
 	return b
 }
 
-func getRandomBlockWithSignature(index uint32) *Block {
+func getRandomBlockWithSignature(t *testing.T, index uint32, prevBlockHash types.Hash) *Block {
 	// create a new block
-	b := getRandomBlock(index)
+	b := getRandomBlock(t, index, prevBlockHash)
 
 	// sign the block
 	privateKey := crypto.GeneratePrivateKey()
@@ -37,12 +38,24 @@ func getRandomBlockWithSignature(index uint32) *Block {
 	return b
 }
 
+func getPrevBlockHash(t *testing.T, bc *Blockchain, index uint32) types.Hash {
+	prevIndex := index - 1
+	if prevIndex > bc.GetHeight() {
+		t.Fatalf("invalid index: %d, blockchain height %d", index, bc.GetHeight())
+	}
+
+	prevBlockHeader, err := bc.GetHeaderByIndex(prevIndex)
+	assert.Nil(t, err)
+	assert.NotNil(t, prevBlockHeader)
+	return bc.BlockHeaderHasher.Hash(prevBlockHeader)
+}
+
 func TestBlockHash(t *testing.T) {
 	// Create a new block header
-	b := getRandomBlock(0)
+	b := getRandomBlock(t, 0, types.Hash{})
 
 	// Calculate the hash of the block
-	hasher := &BlockHasher{}
+	hasher := &BlockHeaderHasher{}
 	hash := b.GetHash(hasher)
 
 	// Ensure the hash is not zero
@@ -51,7 +64,7 @@ func TestBlockHash(t *testing.T) {
 
 func TestBlockSignAndVerifyPass(t *testing.T) {
 	// Create a new block header
-	b := getRandomBlock(0)
+	b := getRandomBlock(t, 0, types.Hash{})
 
 	// Generate a new private key
 	privateKey := crypto.GeneratePrivateKey()
@@ -68,7 +81,7 @@ func TestBlockSignAndVerifyPass(t *testing.T) {
 
 func TestBlockSignAndVerifyFailChangedHeader(t *testing.T) {
 	// Create a new block header
-	b := getRandomBlock(0)
+	b := getRandomBlock(t, 0, types.Hash{})
 
 	// Generate a new private key
 	privateKey := crypto.GeneratePrivateKey()
@@ -88,7 +101,7 @@ func TestBlockSignAndVerifyFailChangedHeader(t *testing.T) {
 
 func TestBlockSignAndVerifyFailNoSignature(t *testing.T) {
 	// Create a new block header
-	b := getRandomBlock(0)
+	b := getRandomBlock(t, 0, types.Hash{})
 
 	// Verify the signature
 	ok, err := b.VerifySignature()
@@ -98,7 +111,7 @@ func TestBlockSignAndVerifyFailNoSignature(t *testing.T) {
 
 func TestBlockSignAndVerifyFailInvalidSignature(t *testing.T) {
 	// Create a new block header
-	b := getRandomBlock(0)
+	b := getRandomBlock(t, 0, types.Hash{})
 
 	// Generate a new private key
 	privateKey := crypto.GeneratePrivateKey()
@@ -121,7 +134,7 @@ func TestBlockSignAndVerifyFailInvalidSignature(t *testing.T) {
 
 func TestBlockSignAndVerifyFailInvalidPublicKey(t *testing.T) {
 	// Create a new block header
-	b := getRandomBlock(0)
+	b := getRandomBlock(t, 0, types.Hash{})
 
 	// Generate a new private key
 	privateKey := crypto.GeneratePrivateKey()
@@ -132,7 +145,7 @@ func TestBlockSignAndVerifyFailInvalidPublicKey(t *testing.T) {
 
 	// Modify the public key
 	otherPrivKey := crypto.GeneratePrivateKey()
-	b.PublicKey = otherPrivKey.GetPublicKey()
+	b.Validator = otherPrivKey.GetPublicKey()
 
 	// Verify the signature
 	ok, err := b.VerifySignature()

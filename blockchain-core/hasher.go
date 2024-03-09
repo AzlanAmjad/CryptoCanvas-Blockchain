@@ -10,10 +10,14 @@ type Hasher[T any] interface {
 	Hash(T) types.Hash
 }
 
-// BlockHeaderHasher is a hasher for block headers. Implementation of the Hasher interface.
-type BlockHasher struct{}
+// BlockHeaderHasher is a hasher for the block header. Implementation of the Hasher interface.
+type BlockHeaderHasher struct{}
 
-func (h *BlockHasher) Hash(b *Block) types.Hash {
-	blockHeaderHash := sha256.Sum256(b.GetHeaderBytes())
+func NewBlockHeaderHasher() *BlockHeaderHasher {
+	return &BlockHeaderHasher{}
+}
+
+func (h *BlockHeaderHasher) Hash(bh *BlockHeader) types.Hash {
+	blockHeaderHash := sha256.Sum256(bh.GetBytes())
 	return types.Hash(blockHeaderHash[:])
 }
