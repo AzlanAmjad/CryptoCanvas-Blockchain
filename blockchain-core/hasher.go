@@ -21,3 +21,15 @@ func (h *BlockHeaderHasher) Hash(bh *BlockHeader) types.Hash {
 	blockHeaderHash := sha256.Sum256(bh.GetBytes())
 	return types.Hash(blockHeaderHash[:])
 }
+
+// TransactionHasher is a hasher for the transaction. Implementation of the Hasher interface.
+type TransactionHasher struct{}
+
+func NewTransactionHasher() *TransactionHasher {
+	return &TransactionHasher{}
+}
+
+func (h *TransactionHasher) Hash(tx *Transaction) types.Hash {
+	transactionHash := sha256.Sum256(tx.Data)
+	return types.Hash(transactionHash[:])
+}
