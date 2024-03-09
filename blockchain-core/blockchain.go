@@ -2,11 +2,13 @@ package core
 
 import (
 	"fmt"
+	"sync"
 
 	"github.com/sirupsen/logrus"
 )
 
 type Blockchain struct {
+	Lock         sync.RWMutex
 	BlockHeaders []*BlockHeader
 	Storage      Storage
 	Validator    Validator
@@ -42,6 +44,7 @@ func (bc *Blockchain) addBlockWithoutValidation(block *Block) error {
 		"block_hash":  block.GetHash(bc.BlockHeaderHasher),
 	}).Log(logrus.InfoLevel, "adding block to the blockchain")
 
+	bc.Lock.Lock()
 	// add the block to the storage
 	err := bc.Storage.Put(block, bc.Encoder)
 	if err != nil {
@@ -49,6 +52,8 @@ func (bc *Blockchain) addBlockWithoutValidation(block *Block) error {
 	}
 	// add the block to the blockchain headers.
 	bc.BlockHeaders = append(bc.BlockHeaders, block.Header)
+	bc.Lock.Unlock()
+
 	return err
 }
 
@@ -61,6 +66,9 @@ func (bc *Blockchain) SetValidator(validator Validator) {
 // [0, 1, 2, 3] -> height = 3
 // GetHeight returns the largest index of the blockchain.
 func (bc *Blockchain) GetHeight() uint32 {
+	bc.Lock.RLock()
+	defer bc.Lock.RUnlock()
+
 	return uint32(len(bc.BlockHeaders) - 1)
 }
 
@@ -75,6 +83,8 @@ func (bc *Blockchain) AddBlock(block *Block) error {
 	if err != nil {
 		return err
 	}
+
+	bc.Lock.Lock()
 	// add the block to the storage
 	err = bc.Storage.Put(block, bc.Encoder)
 	if err != nil {
@@ -82,6 +92,7 @@ func (bc *Blockchain) AddBlock(block *Block) error {
 	}
 	// add the block to the blockchain headers
 	bc.BlockHeaders = append(bc.BlockHeaders, block.Header)
+	bc.Lock.Unlock()
 
 	return nil
 }
@@ -96,5 +107,9 @@ func (bc *Blockchain) GetHeaderByIndex(index uint32) (*BlockHeader, error) {
 	if index > bc.GetHeight() {
 		return nil, fmt.Errorf("block index is invalid, block index: %d, blockchain height: %d", index, bc.GetHeight())
 	}
+
+	bc.Lock.RLock()
+	defer bc.Lock.RUnlock()
+
 	return bc.BlockHeaders[index], nil
 }
