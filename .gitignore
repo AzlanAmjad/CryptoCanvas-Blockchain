@@ -20,4 +20,8 @@
 # Go workspace file
 go.work
 
+# VSCODE
 .vscode/
+
+# LevelDB data directory
+*/leveldb

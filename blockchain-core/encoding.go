@@ -12,4 +12,20 @@ type Decoder[T any] interface {
 
 type BlockEncoder struct{}
 
+func NewBlockEncoder() *BlockEncoder {
+	return &BlockEncoder{}
+}
+
+func (e *BlockEncoder) Encode(w io.Writer, v *Block) error {
+	return nil
+}
+
 type BlockDecoder struct{}
+
+func NewBlockDecoder() *BlockDecoder {
+	return &BlockDecoder{}
+}
+
+func (d *BlockDecoder) Decode(r io.Reader, v *Block) error {
+	return nil
+}
