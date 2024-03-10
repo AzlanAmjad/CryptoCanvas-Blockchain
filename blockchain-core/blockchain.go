@@ -13,8 +13,8 @@ type Blockchain struct {
 	Storage      Storage
 	Validator    Validator
 	// block encoder and decoder
-	Encoder Encoder[*Block]
-	Decoder Decoder[*Block]
+	BlockEncoder Encoder[*Block]
+	BlockDecoder Decoder[*Block]
 	// block header hasher
 	BlockHeaderHasher Hasher[*BlockHeader]
 }
@@ -26,8 +26,8 @@ func NewBlockchain(storage Storage, genesis *Block) (*Blockchain, error) {
 		Storage:      storage,
 	}
 	// add default block encoder and decoder
-	bc.Encoder = NewBlockEncoder()
-	bc.Decoder = NewBlockDecoder()
+	bc.BlockEncoder = NewBlockEncoder()
+	bc.BlockDecoder = NewBlockDecoder()
 	// add default block hasher
 	bc.BlockHeaderHasher = NewBlockHeaderHasher()
 	// set the default block validator
@@ -46,7 +46,7 @@ func (bc *Blockchain) addBlockWithoutValidation(block *Block) error {
 
 	bc.Lock.Lock()
 	// add the block to the storage
-	err := bc.Storage.Put(block, bc.Encoder)
+	err := bc.Storage.Put(block, bc.BlockEncoder)
 	if err != nil {
 		panic(err)
 	}
@@ -86,7 +86,7 @@ func (bc *Blockchain) AddBlock(block *Block) error {
 
 	bc.Lock.Lock()
 	// add the block to the storage
-	err = bc.Storage.Put(block, bc.Encoder)
+	err = bc.Storage.Put(block, bc.BlockEncoder)
 	if err != nil {
 		return err
 	}

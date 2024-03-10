@@ -14,6 +14,8 @@ import (
 // Nodes / servers can can also be validators, that participate in the consensus algorithm. They
 // can be elected to create new blocks, and validate transactions, and propose blocks into the network.
 
+var defaultBlockTime = 5 * time.Second
+
 // One node can have multiple transports, for example, a TCP transport and a UDP transport.
 type ServerOptions struct {
 	Transports []Transport
@@ -34,6 +36,10 @@ type Server struct {
 
 // NewServer creates a new server with the given options.
 func NewServer(options ServerOptions) *Server {
+	if options.BlockTime == time.Duration(0) {
+		options.BlockTime = defaultBlockTime
+	}
+
 	return &Server{
 		ServerOptions: options,
 		blockTime:     options.BlockTime,

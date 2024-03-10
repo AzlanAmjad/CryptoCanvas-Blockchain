@@ -15,7 +15,7 @@ type PrivateKey struct {
 }
 
 type PublicKey struct {
-	key *ecdsa.PublicKey
+	Key *ecdsa.PublicKey
 }
 
 type Signature struct {
@@ -51,7 +51,7 @@ func (k *PrivateKey) Sign(data []byte) (*Signature, error) {
 
 // ToBytes returns the public key as a byte array.
 func (k *PublicKey) ToBytes() []byte {
-	publicKeyBytes := elliptic.MarshalCompressed(k.key.Curve, k.key.X, k.key.Y)
+	publicKeyBytes := elliptic.MarshalCompressed(k.Key.Curve, k.Key.X, k.Key.Y)
 	return publicKeyBytes
 }
 
@@ -65,5 +65,5 @@ func (k *PublicKey) GetAddress() types.Address {
 // Verify verifies the signature of the data using the public key.
 func (k *PublicKey) Verify(data []byte, signature *Signature) bool {
 	dataHash := sha256.Sum256(data)
-	return ecdsa.Verify(k.key, dataHash[:], signature.R, signature.S)
+	return ecdsa.Verify(k.Key, dataHash[:], signature.R, signature.S)
 }

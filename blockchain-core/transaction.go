@@ -2,6 +2,7 @@ package core
 
 import (
 	"fmt"
+	"io"
 
 	crypto "github.com/AzlanAmjad/DreamscapeCanvas-Blockchain/cryptography"
 	types "github.com/AzlanAmjad/DreamscapeCanvas-Blockchain/data-types"
@@ -15,6 +16,15 @@ type Transaction struct {
 
 	// cached hash of the transaction data.
 	hash types.Hash
+	/*
+		firstSeen is the time when the transaction was first seen locally by a node.
+		The firstSeen timestamp is used to order transactions in the mempool based on when they were
+		first added. This approach simplifies the ordering logic and ensures that transactions are
+		processed in the order they were received, without the need for complex synchronization
+		mechanisms like logical timestamps or totally ordered broadcast, which are more suitable for
+		ordering events across different nodes in a distributed system.
+	*/
+	firstSeen int64
 }
 
 // NewTransaction creates a new transaction.
@@ -53,4 +63,24 @@ func (t *Transaction) VerifySignature() (bool, error) {
 	}
 
 	return t.From.Verify(t.Data, t.Signature), nil
+}
+
+// SetFirstSeen sets the firstSeen timestamp of the transaction.
+func (t *Transaction) SetFirstSeen(timestamp int64) {
+	t.firstSeen = timestamp
+}
+
+// GetFirstSeen returns the firstSeen timestamp of the transaction.
+func (t *Transaction) GetFirstSeen() int64 {
+	return t.firstSeen
+}
+
+// Encode encodes a transaction to a writer, in a modular fashion.
+func (t *Transaction) Encode(w io.Writer, enc Encoder[*Transaction]) error {
+	return enc.Encode(w, t)
+}
+
+// Decode decodes a transaction from a reader, in a modular fashion.
+func (t *Transaction) Decode(r io.Reader, dec Decoder[*Transaction]) error {
+	return dec.Decode(r, t)
 }
