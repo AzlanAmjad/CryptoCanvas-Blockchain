@@ -7,4 +7,7 @@ run: build
 	./bin/$(APP_NAME)
 
 test:
+	go test -race ./...
+
+test-verbose:
 	go test -v -race ./...

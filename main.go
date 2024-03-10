@@ -3,7 +3,7 @@ package main
 import (
 	"time"
 
-	"github.com/AzlanAmjad/DreamscapeCanvas-Blockchain/network"
+	network "github.com/AzlanAmjad/DreamscapeCanvas-Blockchain/peer-to-peer-network"
 )
 
 func main() {
