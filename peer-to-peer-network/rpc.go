@@ -49,28 +49,21 @@ func (m *Message) Bytes() []byte {
 	return buf.Bytes()
 }
 
-// RPCHandler is an interface for handling RPCs.
-type RPCHandler interface {
-	HandleRPC(rpc ReceiveRPC) error
+type DecodedMessage struct {
+	Header  MessageType
+	From    NetAddr
+	Message any
 }
 
-// DefaultRPCHandler is the default implementation of RPCHandler.
-type DefaultRPCHandler struct {
-	Processor RPCProcessor
-}
+type RPCDecodeFunc func(ReceiveRPC) (*DecodedMessage, error)
 
-func NewDefaultRPCHandler(processor RPCProcessor) *DefaultRPCHandler {
-	return &DefaultRPCHandler{Processor: processor}
-}
-
-// HandleRPC processes the RPC.
-func (h *DefaultRPCHandler) HandleRPC(rpc ReceiveRPC) error {
+func DefaultRPCDecoder(rpc ReceiveRPC) (*DecodedMessage, error) {
 	msg := Message{}
 
-	// expecting the payload to be a gob encoded message
+	// expect the RPC payload to be a gob encoded message
 	err := gob.NewDecoder(rpc.Payload).Decode(&msg)
 	if err != nil {
-		return fmt.Errorf("error decoding message from %s: %s", rpc.From, err)
+		return nil, fmt.Errorf("error decoding message from %s: %s", rpc.From, err)
 	}
 
 	switch msg.Header {
@@ -78,15 +71,16 @@ func (h *DefaultRPCHandler) HandleRPC(rpc ReceiveRPC) error {
 		tx := core.Transaction{}
 		err = tx.Decode(bytes.NewReader(msg.Payload), core.NewTransactionDecoder())
 		if err != nil {
-			return err
+			return nil, err
 		}
-		return h.Processor.ProcessTransaction(rpc.From, &tx)
+		return &DecodedMessage{Header: msg.Header, From: rpc.From, Message: tx}, nil
 	default:
-		return fmt.Errorf("unknown message type: %d", msg.Header)
+		return nil, fmt.Errorf("unknown message type: %d", msg.Header)
+
 	}
 }
 
 // RPCProcessor is an interface for processing RPCs.
 type RPCProcessor interface {
-	ProcessTransaction(NetAddr, *core.Transaction) error
+	ProcessMessage(*DecodedMessage) error
 }

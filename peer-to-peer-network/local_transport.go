@@ -1,6 +1,7 @@
 package network
 
 import (
+	"bytes"
 	"fmt"
 	"sync"
 )
@@ -61,4 +62,12 @@ func (t *LocalTransport) SendMessageToPeer(rpc SendRPC) error {
 // method to get the address of the transport, used by transport itself
 func (t *LocalTransport) GetAddr() NetAddr {
 	return t.Addr
+}
+
+// method to broadcast a message to all peers, used by transport itself
+func (t *LocalTransport) Broadcast(payload []byte) error {
+	for _, peer := range t.Peers {
+		peer.SendMessageToPeer(SendRPC{To: peer.GetAddr(), Payload: bytes.NewReader(payload)})
+	}
+	return nil
 }

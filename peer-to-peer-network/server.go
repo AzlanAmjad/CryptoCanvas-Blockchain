@@ -1,6 +1,7 @@
 package network
 
 import (
+	"bytes"
 	"fmt"
 	"time"
 
@@ -18,17 +19,16 @@ var defaultBlockTime = 5 * time.Second
 
 // One node can have multiple transports, for example, a TCP transport and a UDP transport.
 type ServerOptions struct {
-	// server needs an RPCHandler, and RPCHandler needs a RPCProcessor which Server implements.
-	RPCHandler RPCHandler
-	Transports []Transport
-	PrivateKey *crypto.PrivateKey
+	RPCDecodeFunc RPCDecodeFunc
+	RPCProcessor  RPCProcessor
+	Transports    []Transport
+	PrivateKey    *crypto.PrivateKey
 	// if a node / server is elect as a validator, server needs to know when its time to consume its mempool and create a new block.
 	BlockTime time.Duration
 }
 
 type Server struct {
 	ServerOptions ServerOptions
-	blockTime     time.Duration
 	isValidator   bool
 	// holds transactions that are not yet included in a block.
 	memPool     *TxPool
@@ -44,7 +44,6 @@ func NewServer(options ServerOptions) *Server {
 
 	s := &Server{
 		ServerOptions: options,
-		blockTime:     options.BlockTime,
 		// Validators will have private keys, so they can sign blocks.
 		// Note: only one validator can be elected, one source of truth, one miner in the whole network.
 		isValidator: options.PrivateKey != nil,
@@ -53,7 +52,15 @@ func NewServer(options ServerOptions) *Server {
 		quitChannel: make(chan bool),
 	}
 
-	s.ServerOptions.RPCHandler = NewDefaultRPCHandler(s)
+	// Set the default RPC decoder.
+	if s.ServerOptions.RPCDecodeFunc == nil {
+		s.ServerOptions.RPCDecodeFunc = DefaultRPCDecoder
+	}
+
+	// Set the default RPC processor.
+	if s.ServerOptions.RPCProcessor == nil {
+		s.ServerOptions.RPCProcessor = s
+	}
 
 	return s
 }
@@ -63,20 +70,22 @@ func NewServer(options ServerOptions) *Server {
 // We make calls to helper functions for processing from here.
 func (s *Server) Start() {
 	s.initTransports()
-	ticker := time.NewTicker(s.blockTime)
+	ticker := time.NewTicker(s.ServerOptions.BlockTime)
 
 	// Run the server in a loop forever.
 	for {
 		select {
 		case message := <-s.rpcChannel:
-			// Process the message.
-			err := s.ServerOptions.RPCHandler.HandleRPC(message)
+			// Decode the message.
+			decodedMessage, err := s.ServerOptions.RPCDecodeFunc(message)
 			if err != nil {
-				logrus.WithFields(
-					logrus.Fields{
-						"error": err,
-					},
-				).Error("Error processing RPC")
+				logrus.WithError(err).Error("Failed to decode message")
+				continue
+			}
+			// Process the message.
+			err = s.ServerOptions.RPCProcessor.ProcessMessage(decodedMessage)
+			if err != nil {
+				logrus.WithError(err).Error("Failed to process message")
 			}
 		case <-s.quitChannel:
 			// Quit the server.
@@ -92,11 +101,50 @@ func (s *Server) Start() {
 	}
 }
 
+func (s *Server) ProcessMessage(decodedMessage *DecodedMessage) error {
+	logrus.WithFields(
+		logrus.Fields{
+			"type": decodedMessage.Header,
+			"from": decodedMessage.From,
+		},
+	).Info("Processing message")
+
+	switch decodedMessage.Header {
+	case Transaction:
+		tx, ok := decodedMessage.Message.(core.Transaction)
+		if !ok {
+			return fmt.Errorf("failed to cast message to transaction")
+		}
+		return s.processTransaction(&tx)
+	default:
+		return fmt.Errorf("unknown message type: %d", decodedMessage.Header)
+	}
+}
+
+func (s *Server) broadcast(payload []byte) error {
+	for _, transport := range s.ServerOptions.Transports {
+		err := transport.Broadcast(payload)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Server) broadcastTx(tx *core.Transaction) error {
+	// encode the transaction, and put it in a message, and broadcast it to the network.
+	transactionBytes := bytes.Buffer{}
+	enc := core.NewTransactionEncoder()
+	tx.Encode(&transactionBytes, enc)
+	msg := NewMessage(Transaction, transactionBytes.Bytes())
+	return s.broadcast(msg.Bytes())
+}
+
 // handling transactions coming into the blockchain
 // two ways:
 // 1. through a wallet (client), HTTP API will receive the transaction, and send it to the server, server will add it to the mempool.
 // 2. through another node, the node will send the transaction to the server, server will add it to the mempool.
-func (s *Server) ProcessTransaction(addr NetAddr, tx *core.Transaction) error {
+func (s *Server) processTransaction(tx *core.Transaction) error {
 	transaction_hash := tx.GetHash(s.memPool.TransactionHasher)
 
 	logrus.WithFields(
@@ -132,7 +180,8 @@ func (s *Server) ProcessTransaction(addr NetAddr, tx *core.Transaction) error {
 		tx.SetFirstSeen(time.Now().UnixNano())
 	}
 
-	// TODO (@Azlan): broadcast this transaction to the network peers
+	// broadcast the transaction to the network
+	go s.broadcastTx(tx)
 
 	logrus.WithFields(
 		logrus.Fields{

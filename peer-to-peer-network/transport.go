@@ -10,4 +10,5 @@ type Transport interface {
 	Connect(Transport) error
 	SendMessageToPeer(SendRPC) error
 	GetAddr() NetAddr
+	Broadcast([]byte) error
 }
