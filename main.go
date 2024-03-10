@@ -1,9 +1,14 @@
 package main
 
 import (
+	"bytes"
+	"crypto/rand"
 	"time"
 
+	core "github.com/AzlanAmjad/DreamscapeCanvas-Blockchain/blockchain-core"
+	crypto "github.com/AzlanAmjad/DreamscapeCanvas-Blockchain/cryptography"
 	network "github.com/AzlanAmjad/DreamscapeCanvas-Blockchain/peer-to-peer-network"
+	"github.com/sirupsen/logrus"
 )
 
 func main() {
@@ -27,7 +32,10 @@ func main() {
 	// We will simulate the remote peer sending a message to the local peer, in a goroutine (thread).
 	go func() {
 		for {
-			transportRemote.SendMessageToPeer(network.SendRPC{To: "Local", Payload: []byte("Hello from Remote!")})
+			// We will simulate the remote peer sending a message to the local peer.
+			if err := sendTransaction(transportRemote, transportLocal.GetAddr()); err != nil {
+				logrus.WithError(err).Error("Failed to send transaction")
+			}
 			time.Sleep(1 * time.Second)
 		}
 	}()
@@ -40,4 +48,33 @@ func main() {
 	// We will create a new server with the server options.
 	server := network.NewServer(serverOptions)
 	server.Start()
+}
+
+func sendTransaction(tr network.Transport, to network.NetAddr) error {
+	// Generate a random byte slice
+	randomBytes := make([]byte, 32)
+	_, err := rand.Read(randomBytes)
+	if err != nil {
+		return err
+	}
+
+	tx := core.NewTransaction(randomBytes)
+
+	// generate private key
+	privateKey := crypto.GeneratePrivateKey()
+	// sign the transaction
+	tx.Sign(&privateKey)
+
+	// encode the transaction
+	buf := bytes.Buffer{}
+	enc := core.NewTransactionEncoder()
+	tx.Encode(&buf, enc)
+
+	// create a message
+	msg := network.NewMessage(network.Transaction, buf.Bytes())
+
+	// send the message
+	tr.SendMessageToPeer(network.SendRPC{To: to, Payload: bytes.NewReader(msg.Bytes())})
+
+	return nil
 }

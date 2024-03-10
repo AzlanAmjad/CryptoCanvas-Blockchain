@@ -1,6 +1,7 @@
 package network
 
 import (
+	"bytes"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -30,11 +31,12 @@ func TestSendMessage(t *testing.T) {
 	t1.Connect(t2)
 	t2.Connect(t1)
 
-	msg := "hello"
+	msg := bytes.Buffer{}
+	msg.Write([]byte("hello"))
 	// new goroutine to send the message
-	go t1.SendMessageToPeer(SendRPC{To: addr2, Payload: []byte(msg)})
+	go t1.SendMessageToPeer(SendRPC{To: addr2, Payload: &msg})
 
 	received := <-t2.Consume()
 	assert.Equal(t, received.From, addr1)
-	assert.Equal(t, received.Payload, []byte(msg))
+	assert.Equal(t, received.Payload, &msg)
 }

@@ -18,6 +18,8 @@ var defaultBlockTime = 5 * time.Second
 
 // One node can have multiple transports, for example, a TCP transport and a UDP transport.
 type ServerOptions struct {
+	// server needs an RPCHandler, and RPCHandler needs a RPCProcessor which Server implements.
+	RPCHandler RPCHandler
 	Transports []Transport
 	PrivateKey *crypto.PrivateKey
 	// if a node / server is elect as a validator, server needs to know when its time to consume its mempool and create a new block.
@@ -40,7 +42,7 @@ func NewServer(options ServerOptions) *Server {
 		options.BlockTime = defaultBlockTime
 	}
 
-	return &Server{
+	s := &Server{
 		ServerOptions: options,
 		blockTime:     options.BlockTime,
 		// Validators will have private keys, so they can sign blocks.
@@ -50,6 +52,10 @@ func NewServer(options ServerOptions) *Server {
 		rpcChannel:  make(chan ReceiveRPC),
 		quitChannel: make(chan bool),
 	}
+
+	s.ServerOptions.RPCHandler = NewDefaultRPCHandler(s)
+
+	return s
 }
 
 // Start will start the server.
@@ -64,7 +70,14 @@ func (s *Server) Start() {
 		select {
 		case message := <-s.rpcChannel:
 			// Process the message.
-			fmt.Printf("Received message from %s: %s\n", message.From, message.Payload)
+			err := s.ServerOptions.RPCHandler.HandleRPC(message)
+			if err != nil {
+				logrus.WithFields(
+					logrus.Fields{
+						"error": err,
+					},
+				).Error("Error processing RPC")
+			}
 		case <-s.quitChannel:
 			// Quit the server.
 			fmt.Println("Quitting the server.")
@@ -83,15 +96,7 @@ func (s *Server) Start() {
 // two ways:
 // 1. through a wallet (client), HTTP API will receive the transaction, and send it to the server, server will add it to the mempool.
 // 2. through another node, the node will send the transaction to the server, server will add it to the mempool.
-func (s *Server) handleTransaction(tx *core.Transaction) error {
-	verified, err := tx.VerifySignature()
-	if err != nil {
-		return err
-	}
-	if !verified {
-		return fmt.Errorf("transaction signature is invalid")
-	}
-
+func (s *Server) ProcessTransaction(addr NetAddr, tx *core.Transaction) error {
 	transaction_hash := tx.GetHash(s.memPool.TransactionHasher)
 
 	logrus.WithFields(
@@ -110,9 +115,29 @@ func (s *Server) handleTransaction(tx *core.Transaction) error {
 		return nil
 	}
 
+	// verify the transaction signature
+	verified, err := tx.VerifySignature()
+	if err != nil {
+		return err
+	}
+	if !verified {
+		return fmt.Errorf("transaction signature is invalid")
+	}
+
+	// set first seen time if not set yet
+	// that means we are the first to see this transaction
+	// i.e. it has come form an external source, and not
+	// been broadcasted to us from another node.
+	if tx.GetFirstSeen() == 0 {
+		tx.SetFirstSeen(time.Now().UnixNano())
+	}
+
+	// TODO (@Azlan): broadcast this transaction to the network peers
+
 	logrus.WithFields(
 		logrus.Fields{
-			"hash": transaction_hash,
+			"hash":        transaction_hash,
+			"memPoolSize": s.memPool.Len(),
 		},
 	).Info("Adding transaction to mempool")
 
