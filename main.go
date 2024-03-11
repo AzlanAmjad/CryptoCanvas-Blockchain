@@ -40,13 +40,17 @@ func main() {
 		}
 	}()
 
+	// Generate private key for server
+	privateKey := crypto.GeneratePrivateKey()
 	// We will have a server which will contain the transport. And any other transport we add in the future.
 	serverOptions := network.ServerOptions{
+		PrivateKey: &privateKey,
+		ID:         "LocalServer",
 		Transports: []network.Transport{transportLocal},
 	}
 
 	// We will create a new server with the server options.
-	server := network.NewServer(serverOptions)
+	server, _ := network.NewServer(serverOptions)
 	server.Start()
 }
 

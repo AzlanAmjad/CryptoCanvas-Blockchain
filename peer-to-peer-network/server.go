@@ -3,22 +3,26 @@ package network
 import (
 	"bytes"
 	"fmt"
+	"os"
 	"time"
 
 	core "github.com/AzlanAmjad/DreamscapeCanvas-Blockchain/blockchain-core"
 	crypto "github.com/AzlanAmjad/DreamscapeCanvas-Blockchain/cryptography"
+	"github.com/go-kit/log"
 	"github.com/sirupsen/logrus"
 )
 
 // The server is a container which will contain every module of the server.
-// Nodes / servers can BlockExplorers, Wallets, and other nodes, to strengthen the network.
-// Nodes / servers can can also be validators, that participate in the consensus algorithm. They
+// 1. Nodes / servers can be BlockExplorers, Wallets, and other nodes, to strengthen the network.
+// 1. Nodes / servers can also be validators, that participate in the consensus algorithm. They
 // can be elected to create new blocks, and validate transactions, and propose blocks into the network.
 
 var defaultBlockTime = 5 * time.Second
 
 // One node can have multiple transports, for example, a TCP transport and a UDP transport.
 type ServerOptions struct {
+	ID            string
+	Logger        log.Logger
 	RPCDecodeFunc RPCDecodeFunc
 	RPCProcessor  RPCProcessor
 	Transports    []Transport
@@ -34,12 +38,29 @@ type Server struct {
 	memPool     *TxPool
 	rpcChannel  chan ReceiveRPC
 	quitChannel chan bool
+	chain       *core.Blockchain
 }
 
 // NewServer creates a new server with the given options.
-func NewServer(options ServerOptions) *Server {
+func NewServer(options ServerOptions) (*Server, error) {
 	if options.BlockTime == time.Duration(0) {
 		options.BlockTime = defaultBlockTime
+	}
+
+	if options.Logger == nil {
+		options.Logger = log.NewLogfmtLogger(os.Stderr)
+		options.Logger = log.With(options.Logger, "ID", options.ID)
+	}
+
+	// create the default LevelDB storage
+	storage, err := core.NewLevelDBStorage("./leveldb/blockchain")
+	if err != nil {
+		return nil, err
+	}
+	// create new blockchain with the LevelDB storage
+	bc, err := core.NewBlockchain(storage, genesisBlock())
+	if err != nil {
+		return nil, err
 	}
 
 	s := &Server{
@@ -50,6 +71,7 @@ func NewServer(options ServerOptions) *Server {
 		memPool:     NewTxPool(),
 		rpcChannel:  make(chan ReceiveRPC),
 		quitChannel: make(chan bool),
+		chain:       bc,
 	}
 
 	// Set the default RPC decoder.
@@ -62,7 +84,12 @@ func NewServer(options ServerOptions) *Server {
 		s.ServerOptions.RPCProcessor = s
 	}
 
-	return s
+	// Goroutine (Thread) to process creation of blocks if the node is a validator.
+	if s.isValidator {
+		go s.validatorLoop()
+	}
+
+	return s, nil
 }
 
 // Start will start the server.
@@ -70,7 +97,6 @@ func NewServer(options ServerOptions) *Server {
 // We make calls to helper functions for processing from here.
 func (s *Server) Start() {
 	s.initTransports()
-	ticker := time.NewTicker(s.ServerOptions.BlockTime)
 
 	// Run the server in a loop forever.
 	for {
@@ -90,12 +116,27 @@ func (s *Server) Start() {
 		case <-s.quitChannel:
 			// Quit the server.
 			fmt.Println("Quitting the server.")
+			s.handleQuit()
+			return
+		}
+	}
+}
+
+// validatorLoop will create a new block every block time.
+// validatorLoop is only stared if the server is a validator.
+func (s *Server) validatorLoop() {
+	// Create a ticker to create a new block every block time.
+	ticker := time.NewTicker(s.ServerOptions.BlockTime)
+	for {
+		select {
+		case <-s.quitChannel:
 			return
 		case <-ticker.C:
 			// Here we will include CONSENSUS LOGIC / LEADER ELECTION LOGIC / BLOCK CREATION LOGIC.
-			if s.isValidator {
-				// If the server is validator, create a new block.
-				s.createNewBlock()
+			// If the server is the elected validator, create a new block.
+			err := s.createNewBlock()
+			if err != nil {
+				logrus.WithError(err).Error("Failed to create new block")
 			}
 		}
 	}
@@ -147,6 +188,8 @@ func (s *Server) broadcastTx(tx *core.Transaction) error {
 func (s *Server) processTransaction(tx *core.Transaction) error {
 	transaction_hash := tx.GetHash(s.memPool.TransactionHasher)
 
+	s.ServerOptions.Logger.Log("Received new transaction", "hash", transaction_hash)
+
 	logrus.WithFields(
 		logrus.Fields{
 			"hash": transaction_hash,
@@ -194,16 +237,15 @@ func (s *Server) processTransaction(tx *core.Transaction) error {
 	return s.memPool.Add(tx)
 }
 
-// createNewBlock will create a new block.
-func (s *Server) createNewBlock() error {
-	// Create a new block and broadcast it to the network.
-	fmt.Println("Creating a new block.")
-	return nil
-}
-
 // Stop will stop the server.
 func (s *Server) Stop() {
 	s.quitChannel <- true
+}
+
+// handleQuit will handle the quit signal sent by Stop()
+func (s *Server) handleQuit() {
+	// shutdown the storage
+	s.chain.Storage.Shutdown()
 }
 
 // initTransports will initialize the transports.
@@ -221,4 +263,62 @@ func (s *Server) startTransport(transport Transport) {
 		// Send ReceiveRPC message to the server's rpcChannel. For synchronous processing.
 		s.rpcChannel <- message
 	}
+}
+
+// createNewBlock will create a new block.
+func (s *Server) createNewBlock() error {
+	// get the previous block hash
+	prevBlockHash, err := s.chain.GetBlockHash(s.chain.GetHeight())
+	if err != nil {
+		return err
+	}
+
+	// create a new block, with all mempool transactions
+	transactions := s.memPool.GetTransactions()
+	// flush mempool since we got all the transactions
+	s.memPool.Flush()
+	// create the block
+	block := core.NewBlockWithTransactions(transactions)
+	// link block to previous block
+	block.Header.PrevBlockHash = prevBlockHash
+	// update the block index
+	block.Header.Index = s.chain.GetHeight() + 1
+	// TODO (Azlan): update other block parameters so that this block is not marked as invalid.
+
+	// sign the block as a validator of this block
+	err = block.Sign(s.ServerOptions.PrivateKey)
+	if err != nil {
+		return err
+	}
+
+	// log the block
+	logrus.WithFields(
+		logrus.Fields{
+			"block_index": block.Header.Index,
+			"block_hash":  block.GetHash(s.chain.BlockHeaderHasher),
+			"data_hash":   block.Header.DataHash,
+		},
+	).Info("Created new block")
+
+	// add the block to the blockchain
+	err = s.chain.AddBlock(block)
+	if err != nil {
+		// something ent wrong, we need to re-add the transactions to the mempool
+		// so that they can be included in the next block.
+		for _, tx := range transactions {
+			s.memPool.Add(tx)
+		}
+
+		return err
+	}
+
+	return nil
+}
+
+// genesisBlock creates the first block in the blockchain.
+func genesisBlock() *core.Block {
+	b := core.NewBlock()
+	b.Header.Index = 0
+	b.Header.Version = 1
+	return b
 }

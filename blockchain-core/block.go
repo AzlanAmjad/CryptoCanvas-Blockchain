@@ -2,9 +2,11 @@ package core
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/gob"
 	"fmt"
 	"io"
+	"time"
 
 	crypto "github.com/AzlanAmjad/DreamscapeCanvas-Blockchain/cryptography"
 	types "github.com/AzlanAmjad/DreamscapeCanvas-Blockchain/data-types"
@@ -14,7 +16,7 @@ import (
 type BlockHeader struct {
 	Version       uint32
 	PrevBlockHash types.Hash
-	MerkleRoot    types.Hash // transactions merkle root hash, used to verify the integrity of the transactions
+	DataHash      types.Hash // transactions merkle root hash, used to verify the integrity of the transactions
 	Timestamp     int64
 	Index         uint32
 }
@@ -39,6 +41,42 @@ type Block struct {
 
 	// cached block header hash
 	hash types.Hash
+
+	// transaction encoder and decoder
+	transactionEncoder Encoder[*Transaction]
+	transactionDecoder Decoder[*Transaction]
+}
+
+// NewBlock creates a new block. Returns a default block to use.
+// This API should always be used instead of explicitly creating a block.
+func NewBlock() *Block {
+	return &Block{
+		Header: &BlockHeader{
+			Version:       1,
+			PrevBlockHash: types.Hash{},
+			DataHash:      types.Hash{},
+			Timestamp:     time.Now().UnixNano(),
+			Index:         0,
+		},
+		Transactions: []*Transaction{},
+		// default transaction encoder and decoder
+		transactionEncoder: NewTransactionEncoder(),
+		transactionDecoder: NewTransactionDecoder(),
+	}
+}
+
+func NewBlockWithTransactions(transactions []*Transaction) *Block {
+	b := NewBlock()
+	b.Transactions = transactions
+
+	// calculate data hash
+	dataHash, err := CalculateDataHash(b.Transactions, b.transactionEncoder)
+	if err != nil {
+		panic(err)
+	}
+	b.Header.DataHash = dataHash
+
+	return b
 }
 
 // Add transaction to block
@@ -72,6 +110,18 @@ func (b *Block) VerifySignature() (bool, error) {
 		}
 	}
 
+	// Verify the block data hash
+	if b.transactionEncoder == nil {
+		return false, fmt.Errorf("no transaction encoder")
+	}
+	dataHash, err := CalculateDataHash(b.Transactions, b.transactionEncoder)
+	if err != nil {
+		return false, err
+	}
+	if dataHash != b.Header.DataHash {
+		return false, fmt.Errorf("invalid data hash")
+	}
+
 	// Verify the block signature
 	return b.Validator.Verify(b.Header.GetBytes(), b.Signature), nil
 }
@@ -86,6 +136,7 @@ func (b *Block) Encode(w io.Writer, enc Encoder[*Block]) error {
 	return enc.Encode(w, b)
 }
 
+// GetHash returns the hash of the block.
 func (b *Block) GetHash(hasher Hasher[*BlockHeader]) types.Hash {
 	// if the hash is already cached, return it
 	if !b.hash.IsZero() {
@@ -93,4 +144,20 @@ func (b *Block) GetHash(hasher Hasher[*BlockHeader]) types.Hash {
 	}
 
 	return hasher.Hash(b.Header)
+}
+
+// Calculate DataHash from transactions
+func CalculateDataHash(transactions []*Transaction, enc Encoder[*Transaction]) (types.Hash, error) {
+	buf := &bytes.Buffer{}
+
+	for _, tx := range transactions {
+		err := tx.Encode(buf, enc)
+		if err != nil {
+			return types.Hash{}, err
+		}
+	}
+
+	hash := sha256.Sum256(buf.Bytes())
+
+	return types.Hash(hash), nil
 }

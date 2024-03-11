@@ -36,7 +36,7 @@ func TestHasBlock(t *testing.T) {
 	assert.Nil(t, err)
 
 	// create a new block
-	block := getRandomBlockWithSignature(t, 1, getPrevBlockHash(t, bc, 1))
+	block := getRandomBlock(t, 1, getPrevBlockHash(t, bc, 1))
 
 	// add the block to the blockchain
 	err = bc.AddBlock(block)
@@ -46,7 +46,7 @@ func TestHasBlock(t *testing.T) {
 	assert.True(t, bc.HasBlock(block))
 
 	// create a new block
-	block2 := getRandomBlockWithSignature(t, 2, getPrevBlockHash(t, bc, 2))
+	block2 := getRandomBlock(t, 2, getPrevBlockHash(t, bc, 2))
 	assert.False(t, bc.HasBlock(block2))
 }
 
@@ -64,7 +64,7 @@ func TestAddBlock(t *testing.T) {
 
 	for i := 1; i < 10; i++ {
 		// create a new block
-		block := getRandomBlockWithSignature(t, uint32(i), getPrevBlockHash(t, bc, uint32(i)))
+		block := getRandomBlock(t, uint32(i), getPrevBlockHash(t, bc, uint32(i)))
 
 		// add the block to the blockchain
 		err = bc.AddBlock(block)
@@ -73,7 +73,7 @@ func TestAddBlock(t *testing.T) {
 	}
 
 	// add the same block again
-	block := getRandomBlockWithSignature(t, 9, getPrevBlockHash(t, bc, 9))
+	block := getRandomBlock(t, 9, getPrevBlockHash(t, bc, 9))
 	err = bc.AddBlock(block)
 	assert.NotNil(t, err)
 }
@@ -91,8 +91,8 @@ func TestAddBlockToHigh(t *testing.T) {
 	assert.Nil(t, err)
 
 	// create a new block, with a high index
-	block := getRandomBlockWithSignature(t, 10, types.Hash{})
-	valid_block := getRandomBlockWithSignature(t, 1, getPrevBlockHash(t, bc, 1))
+	block := getRandomBlock(t, 10, types.Hash{})
+	valid_block := getRandomBlock(t, 1, getPrevBlockHash(t, bc, 1))
 
 	// add the block to the blockchain
 	assert.NotNil(t, bc.AddBlock(block))
@@ -113,7 +113,7 @@ func TestGetHeaderByIndex(t *testing.T) {
 
 	for i := 1; i < 10; i++ {
 		// create a new block
-		block := getRandomBlockWithSignature(t, uint32(i), getPrevBlockHash(t, bc, uint32(i)))
+		block := getRandomBlock(t, uint32(i), getPrevBlockHash(t, bc, uint32(i)))
 
 		// add the block to the blockchain
 		err = bc.AddBlock(block)

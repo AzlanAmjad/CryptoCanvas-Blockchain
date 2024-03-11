@@ -1,6 +1,7 @@
 package core
 
 import (
+	"bytes"
 	"math/big"
 	"testing"
 	"time"
@@ -11,25 +12,23 @@ import (
 )
 
 func getRandomBlock(t *testing.T, index uint32, prevBlockHash types.Hash) *Block {
-	// create a new block
-	bh := &BlockHeader{
-		Version:       1,
-		PrevBlockHash: prevBlockHash,
-		MerkleRoot:    types.Hash{0x04, 0x05, 0x06},
-		Timestamp:     time.Now().UnixNano(),
-		Index:         index,
-	}
-	b := &Block{
-		Header:       bh,
-		Transactions: []*Transaction{},
-	}
-	assert.NotNil(t, b)
-	return b
-}
+	// generate random transaction
+	tx := randomTransactionWithSignature(t)
 
-func getRandomBlockWithSignature(t *testing.T, index uint32, prevBlockHash types.Hash) *Block {
 	// create a new block
-	b := getRandomBlock(t, index, prevBlockHash)
+	b := NewBlock()
+	b.Header.PrevBlockHash = prevBlockHash
+	b.Header.Index = index
+	b.Header.Timestamp = time.Now().UnixNano()
+	b.Transactions = append(b.Transactions, tx)
+	assert.NotNil(t, b)
+
+	// data hash
+	dataHash, err := CalculateDataHash(b.Transactions, b.transactionEncoder)
+	if err != nil {
+		t.Fatalf("failed to calculate data hash: %s", err)
+	}
+	b.Header.DataHash = dataHash
 
 	// sign the block
 	privateKey := crypto.GeneratePrivateKey()
@@ -102,6 +101,7 @@ func TestBlockSignAndVerifyFailChangedHeader(t *testing.T) {
 func TestBlockSignAndVerifyFailNoSignature(t *testing.T) {
 	// Create a new block header
 	b := getRandomBlock(t, 0, types.Hash{})
+	b.Signature = nil
 
 	// Verify the signature
 	ok, err := b.VerifySignature()
@@ -151,4 +151,30 @@ func TestBlockSignAndVerifyFailInvalidPublicKey(t *testing.T) {
 	ok, err := b.VerifySignature()
 	assert.False(t, ok)
 	assert.NoError(t, err)
+}
+
+func TestBlockEncodeDecode(t *testing.T) {
+	// Create a new block header
+	b := getRandomBlock(t, 0, types.Hash{})
+
+	// Encode the block
+	buf := bytes.Buffer{}
+	enc := NewBlockEncoder()
+	err := b.Encode(&buf, enc)
+	if err != nil {
+		t.Fatalf("failed to encode block: %s", err)
+	}
+	assert.NoError(t, err)
+
+	// Decode the block
+	dec := NewBlockDecoder()
+	decodedBlock := NewBlock()
+	err = decodedBlock.Decode(&buf, dec)
+	if err != nil {
+		t.Fatalf("failed to decode block: %s", err.Error())
+	}
+	assert.NoError(t, err)
+
+	// verify the decoded block
+	assert.Equal(t, b.Header.Index, decodedBlock.Header.Index)
 }

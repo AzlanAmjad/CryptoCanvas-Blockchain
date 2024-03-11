@@ -30,7 +30,15 @@ func NewBlockEncoder() *BlockEncoder {
 	return &BlockEncoder{}
 }
 
-func (e *BlockEncoder) Encode(w io.Writer, v *Block) error {
+func (e *BlockEncoder) Encode(w io.Writer, b *Block) error {
+	enc := gob.NewEncoder(w)
+	err := enc.Encode(b.Header.Index)
+	if err != nil {
+		return fmt.Errorf("failed to encode block header: %s", err)
+	}
+
+	// TODO (Azlan): Finish Encoding the block
+
 	return nil
 }
 
@@ -40,12 +48,20 @@ func NewBlockDecoder() *BlockDecoder {
 	return &BlockDecoder{}
 }
 
-func (d *BlockDecoder) Decode(r io.Reader, v *Block) error {
+func (d *BlockDecoder) Decode(r io.Reader, b *Block) error {
+	dec := gob.NewDecoder(r)
+	Index := b.Header.Index
+	err := dec.Decode(&Index)
+	if err != nil {
+		return fmt.Errorf("failed to decode block header: %s", err)
+	}
+
+	// TODO (Azlan): Finish Decoding the block
+
 	return nil
 }
 
 // Default transaction encoder and decoder
-
 type TransactionEncoder struct{}
 
 func NewTransactionEncoder() *TransactionEncoder {

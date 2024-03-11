@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sync"
 
+	types "github.com/AzlanAmjad/DreamscapeCanvas-Blockchain/data-types"
 	"github.com/sirupsen/logrus"
 )
 
@@ -28,7 +29,7 @@ func NewBlockchain(storage Storage, genesis *Block) (*Blockchain, error) {
 	// add default block encoder and decoder
 	bc.BlockEncoder = NewBlockEncoder()
 	bc.BlockDecoder = NewBlockDecoder()
-	// add default block hasher
+	// add default block header hasher
 	bc.BlockHeaderHasher = NewBlockHeaderHasher()
 	// set the default block validator
 	bc.SetValidator(NewBlockValidator(bc))
@@ -112,4 +113,12 @@ func (bc *Blockchain) GetHeaderByIndex(index uint32) (*BlockHeader, error) {
 	defer bc.Lock.RUnlock()
 
 	return bc.BlockHeaders[index], nil
+}
+
+func (bc *Blockchain) GetBlockHash(index uint32) (types.Hash, error) {
+	header, err := bc.GetHeaderByIndex(index)
+	if err != nil {
+		return types.Hash{}, err
+	}
+	return bc.BlockHeaderHasher.Hash(header), nil
 }
