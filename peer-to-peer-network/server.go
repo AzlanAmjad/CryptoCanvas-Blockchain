@@ -28,7 +28,8 @@ type ServerOptions struct {
 	Transports    []Transport
 	PrivateKey    *crypto.PrivateKey
 	// if a node / server is elect as a validator, server needs to know when its time to consume its mempool and create a new block.
-	BlockTime time.Duration
+	BlockTime      time.Duration
+	MaxMemPoolSize int
 }
 
 type Server struct {
@@ -43,13 +44,16 @@ type Server struct {
 
 // NewServer creates a new server with the given options.
 func NewServer(options ServerOptions) (*Server, error) {
+	// setting default values if none are specified
 	if options.BlockTime == time.Duration(0) {
 		options.BlockTime = defaultBlockTime
 	}
-
 	if options.Logger == nil {
 		options.Logger = log.NewLogfmtLogger(os.Stderr)
 		options.Logger = log.With(options.Logger, "ID", options.ID)
+	}
+	if options.MaxMemPoolSize == 0 {
+		options.MaxMemPoolSize = 100
 	}
 
 	// create the default LevelDB storage
@@ -69,7 +73,7 @@ func NewServer(options ServerOptions) (*Server, error) {
 		// Validators will have private keys, so they can sign blocks.
 		// Note: only one validator can be elected, one source of truth, one miner in the whole network.
 		isValidator: options.PrivateKey != nil,
-		memPool:     NewTxPool(),
+		memPool:     NewTxPool(options.MaxMemPoolSize),
 		rpcChannel:  make(chan ReceiveRPC),
 		quitChannel: make(chan bool),
 		chain:       bc,
@@ -259,12 +263,12 @@ func (s *Server) processBlock(block *core.Block) error {
 // 1. through a wallet (client), HTTP API will receive the transaction, and send it to the server, server will add it to the mempool.
 // 2. through another node, the node will send the transaction to the server, server will add it to the mempool.
 func (s *Server) processTransaction(tx *core.Transaction) error {
-	transaction_hash := tx.GetHash(s.memPool.TransactionHasher)
+	transaction_hash := tx.GetHash(s.memPool.Pending.TransactionHasher)
 
 	s.ServerOptions.Logger.Log("msg", "Received new transaction", "hash", transaction_hash)
 
 	// check if transaction exists
-	if s.memPool.Has(tx.GetHash(s.memPool.TransactionHasher)) {
+	if s.memPool.PendingHas(tx.GetHash(s.memPool.Pending.TransactionHasher)) {
 		s.ServerOptions.Logger.Log("msg", "Transaction already exists in the mempool", "hash", transaction_hash)
 		return nil
 	}
@@ -293,7 +297,7 @@ func (s *Server) processTransaction(tx *core.Transaction) error {
 	// broadcast the transaction to the network (all peers)
 	go s.broadcastTx(tx)
 
-	s.ServerOptions.Logger.Log("msg", "Adding transaction to mempool", "hash", transaction_hash, "memPoolSize", s.memPool.Len())
+	s.ServerOptions.Logger.Log("msg", "Adding transaction to mempool", "hash", transaction_hash, "memPoolSize", s.memPool.PendingLen())
 
 	// add transaction to mempool
 	return s.memPool.Add(tx)
@@ -357,13 +361,13 @@ func (s *Server) createNewBlock() error {
 	// but here we are including all transactions in the mempool.
 	// once we know how our transactions will be structured
 	// we can include a specific number of transactions in each block.
-	transactions := s.memPool.GetTransactions()
+	transactions := s.memPool.GetPendingTransactions()
 	// flush mempool since we got all the transactions
 	// IMPORTANT: we flush right away because while we execute
 	// the block creation logic, new transactions might come in, since
 	// createBlock() runs in the validatorLoop() goroutine, it is running
 	// parallel to the main server loop Start().
-	s.memPool.Flush()
+	s.memPool.FlushPending()
 	// create the block
 	block := core.NewBlockWithTransactions(transactions)
 	// link block to previous block
