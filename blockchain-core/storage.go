@@ -3,6 +3,7 @@ package core
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 
 	"github.com/syndtr/goleveldb/leveldb"
 )
@@ -21,6 +22,7 @@ type LevelDBStorage struct {
 
 // NewLevelDBStorage creates a new LevelDBStorage.
 func NewLevelDBStorage(dbPath string) (*LevelDBStorage, error) {
+	fmt.Println("Creating a new LevelDBStorage at path:", dbPath)
 	db, err := leveldb.OpenFile(dbPath, nil)
 	if err != nil {
 		return nil, err

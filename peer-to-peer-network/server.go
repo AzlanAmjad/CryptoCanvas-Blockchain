@@ -53,12 +53,13 @@ func NewServer(options ServerOptions) (*Server, error) {
 	}
 
 	// create the default LevelDB storage
-	storage, err := core.NewLevelDBStorage("./leveldb/blockchain")
+	dbPath := fmt.Sprintf("./leveldb/%s/blockchain", options.ID)
+	storage, err := core.NewLevelDBStorage(dbPath)
 	if err != nil {
 		return nil, err
 	}
 	// create new blockchain with the LevelDB storage
-	bc, err := core.NewBlockchain(storage, genesisBlock())
+	bc, err := core.NewBlockchain(storage, genesisBlock(), options.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -89,6 +90,13 @@ func NewServer(options ServerOptions) (*Server, error) {
 		go s.validatorLoop()
 	}
 
+	// log server creation
+	s.ServerOptions.Logger.Log(
+		"msg", "server created",
+		"server_id", s.ServerOptions.ID,
+		"validator", s.isValidator,
+	)
+
 	return s, nil
 }
 
@@ -96,9 +104,15 @@ func NewServer(options ServerOptions) (*Server, error) {
 // This is the core of the server, where the server will listen for messages from the transports.
 // We make calls to helper functions for processing from here.
 func (s *Server) Start() {
-	s.initTransports()
+	err := s.initTransports()
+	if err != nil {
+		logrus.WithError(err).Error("Failed to initialize transports")
+		return
+	}
 
 	// Run the server in a loop forever.
+	s.ServerOptions.Logger.Log("msg", "Starting main server loop", "server_id", s.ServerOptions.ID)
+
 	for {
 		select {
 		case message := <-s.rpcChannel:
@@ -114,6 +128,8 @@ func (s *Server) Start() {
 				logrus.WithError(err).Error("Failed to process message")
 			}
 		case <-s.quitChannel:
+			// log the quit signal
+			s.ServerOptions.Logger.Log("msg", "Received quit signal", "server_id", s.ServerOptions.ID)
 			// Quit the server.
 			fmt.Println("Quitting the server.")
 			s.handleQuit()
@@ -123,8 +139,10 @@ func (s *Server) Start() {
 }
 
 // validatorLoop will create a new block every block time.
-// validatorLoop is only stared if the server is a validator.
+// validatorLoop is only started if the server is a validator.
 func (s *Server) validatorLoop() {
+	s.ServerOptions.Logger.Log("msg", "Starting validator loop", "server_id", s.ServerOptions.ID)
+
 	// Create a ticker to create a new block every block time.
 	ticker := time.NewTicker(s.ServerOptions.BlockTime)
 	for {
@@ -143,12 +161,7 @@ func (s *Server) validatorLoop() {
 }
 
 func (s *Server) ProcessMessage(decodedMessage *DecodedMessage) error {
-	logrus.WithFields(
-		logrus.Fields{
-			"type": decodedMessage.Header,
-			"from": decodedMessage.From,
-		},
-	).Info("Processing message")
+	//s.ServerOptions.Logger.Log("msg", "Processing message", "type", decodedMessage.Header, "from", decodedMessage.From)
 
 	switch decodedMessage.Header {
 	case Transaction:
@@ -157,6 +170,13 @@ func (s *Server) ProcessMessage(decodedMessage *DecodedMessage) error {
 			return fmt.Errorf("failed to cast message to transaction")
 		}
 		return s.processTransaction(&tx)
+	case Block:
+		block, ok := decodedMessage.Message.(core.Block)
+		if !ok {
+			print(decodedMessage.Message)
+			return fmt.Errorf("failed to cast message to block")
+		}
+		return s.processBlock(&block)
 	default:
 		return fmt.Errorf("unknown message type: %d", decodedMessage.Header)
 	}
@@ -172,13 +192,66 @@ func (s *Server) broadcast(payload []byte) error {
 	return nil
 }
 
-func (s *Server) broadcastTx(tx *core.Transaction) error {
+// broadcast the transaction to all known peers, eventually consistency model
+func (s *Server) broadcastTx(tx *core.Transaction) {
+	//s.ServerOptions.Logger.Log("msg", "Broadcasting transaction", "hash", tx.GetHash(s.memPool.TransactionHasher))
+
 	// encode the transaction, and put it in a message, and broadcast it to the network.
 	transactionBytes := bytes.Buffer{}
 	enc := core.NewTransactionEncoder()
-	tx.Encode(&transactionBytes, enc)
+	err := tx.Encode(&transactionBytes, enc)
+	if err != nil {
+		logrus.WithError(err).Error("Failed to encode transaction")
+		return
+	}
 	msg := NewMessage(Transaction, transactionBytes.Bytes())
-	return s.broadcast(msg.Bytes())
+	err = s.broadcast(msg.Bytes())
+	if err != nil {
+		logrus.WithError(err).Error("Failed to broadcast transaction")
+	}
+}
+
+// broadcast the block to all known peers, eventually consistency model
+func (s *Server) broadcastBlock(block *core.Block) {
+	s.ServerOptions.Logger.Log("msg", "Broadcasting block", "hash", block.GetHash(s.chain.BlockHeaderHasher))
+	fmt.Println("block_index", block.Header.Index)
+
+	// encode the block, and put it in a message, and broadcast it to the network.
+	blockBytes := bytes.Buffer{}
+	enc := core.NewBlockEncoder()
+	err := block.Encode(&blockBytes, enc)
+	if err != nil {
+		logrus.WithError(err).Error("Failed to encode block")
+		return
+	}
+	msg := NewMessage(Block, blockBytes.Bytes())
+	err = s.broadcast(msg.Bytes())
+	if err != nil {
+		logrus.WithError(err).Error("Failed to broadcast block")
+	}
+}
+
+// handling blocks coming into the blockchain
+// two ways:
+// 1. through another block that is forwarding the block to known peers
+// 2. the leader node chose through consensus has created a new block, and is broadcasting it to us
+func (s *Server) processBlock(block *core.Block) error {
+	blockHash := block.GetHash(s.chain.BlockHeaderHasher)
+	s.ServerOptions.Logger.Log("msg", "Received new block", "hash", blockHash)
+
+	// add the block to the blockchain, this includes validation
+	// of the block before addition
+	err := s.chain.AddBlock(block)
+	if err != nil {
+		return err
+	}
+
+	// broadcast the block to the network (all peers)
+	go s.broadcastBlock(block)
+
+	s.ServerOptions.Logger.Log("msg", "Added block to blockchain", "hash", blockHash, "blockchainHeight", s.chain.GetHeight())
+
+	return nil
 }
 
 // handling transactions coming into the blockchain
@@ -188,21 +261,11 @@ func (s *Server) broadcastTx(tx *core.Transaction) error {
 func (s *Server) processTransaction(tx *core.Transaction) error {
 	transaction_hash := tx.GetHash(s.memPool.TransactionHasher)
 
-	s.ServerOptions.Logger.Log("Received new transaction", "hash", transaction_hash)
-
-	logrus.WithFields(
-		logrus.Fields{
-			"hash": transaction_hash,
-		},
-	).Info("Received new transaction")
+	s.ServerOptions.Logger.Log("msg", "Received new transaction", "hash", transaction_hash)
 
 	// check if transaction exists
 	if s.memPool.Has(tx.GetHash(s.memPool.TransactionHasher)) {
-		logrus.WithFields(
-			logrus.Fields{
-				"hash": transaction_hash,
-			},
-		).Warn("Transaction already exists in the mempool")
+		s.ServerOptions.Logger.Log("msg", "Transaction already exists in the mempool", "hash", transaction_hash)
 		return nil
 	}
 
@@ -217,21 +280,20 @@ func (s *Server) processTransaction(tx *core.Transaction) error {
 
 	// set first seen time if not set yet
 	// that means we are the first to see this transaction
-	// i.e. it has come form an external source, and not
+	// i.e. it has come from an external source, and not
 	// been broadcasted to us from another node.
+	// if another node running this same software has already seen this transaction
+	// then it will have set the first seen time. giving us total ordering of transactions.
+	// WE DO NOT USE LOGICAL TIMESTAMPS OR SYNCHRONIZATION MECHANISMS HERE BECAUSE TRANSACTIONS
+	// ARE EXTERNAL TO THE NETWORK, AND CAN BE SENT FROM ANYWHERE.
 	if tx.GetFirstSeen() == 0 {
 		tx.SetFirstSeen(time.Now().UnixNano())
 	}
 
-	// broadcast the transaction to the network
+	// broadcast the transaction to the network (all peers)
 	go s.broadcastTx(tx)
 
-	logrus.WithFields(
-		logrus.Fields{
-			"hash":        transaction_hash,
-			"memPoolSize": s.memPool.Len(),
-		},
-	).Info("Adding transaction to mempool")
+	s.ServerOptions.Logger.Log("msg", "Adding transaction to mempool", "hash", transaction_hash, "memPoolSize", s.memPool.Len())
 
 	// add transaction to mempool
 	return s.memPool.Add(tx)
@@ -249,11 +311,28 @@ func (s *Server) handleQuit() {
 }
 
 // initTransports will initialize the transports.
-func (s *Server) initTransports() {
+func (s *Server) initTransports() error {
+	if s.ServerOptions.Transports == nil {
+		return fmt.Errorf("no transports to initialize")
+	}
+
+	// log init of transports
+	s.ServerOptions.Logger.Log(
+		"msg", "Initializing transports",
+		"server_id", s.ServerOptions.ID,
+		"transports", len(s.ServerOptions.Transports),
+	)
+
 	// For each transport, spin up a new goroutine (user level thread).
 	for _, transport := range s.ServerOptions.Transports {
+		if transport == nil {
+			return fmt.Errorf("transport is nil")
+		}
+		// print concrete type of transport variable
 		go s.startTransport(transport)
 	}
+
+	return nil
 }
 
 // startTransport will start the transport.
@@ -274,8 +353,16 @@ func (s *Server) createNewBlock() error {
 	}
 
 	// create a new block, with all mempool transactions
+	// normally we might just include a specific number of transactions in each block
+	// but here we are including all transactions in the mempool.
+	// once we know how our transactions will be structured
+	// we can include a specific number of transactions in each block.
 	transactions := s.memPool.GetTransactions()
 	// flush mempool since we got all the transactions
+	// IMPORTANT: we flush right away because while we execute
+	// the block creation logic, new transactions might come in, since
+	// createBlock() runs in the validatorLoop() goroutine, it is running
+	// parallel to the main server loop Start().
 	s.memPool.Flush()
 	// create the block
 	block := core.NewBlockWithTransactions(transactions)
@@ -291,15 +378,6 @@ func (s *Server) createNewBlock() error {
 		return err
 	}
 
-	// log the block
-	logrus.WithFields(
-		logrus.Fields{
-			"block_index": block.Header.Index,
-			"block_hash":  block.GetHash(s.chain.BlockHeaderHasher),
-			"data_hash":   block.Header.DataHash,
-		},
-	).Info("Created new block")
-
 	// add the block to the blockchain
 	err = s.chain.AddBlock(block)
 	if err != nil {
@@ -312,12 +390,18 @@ func (s *Server) createNewBlock() error {
 		return err
 	}
 
+	// as the leader node chosen by consensus for block addition
+	// we were able to create a new block successfully,
+	// broadcast it to all our peers, to ensure eventual consistency
+	go s.broadcastBlock(block)
+
 	return nil
 }
 
 // genesisBlock creates the first block in the blockchain.
 func genesisBlock() *core.Block {
 	b := core.NewBlock()
+	b.Header.Timestamp = 0000000000 // setting to zero for all genesis blocks created across all nodes
 	b.Header.Index = 0
 	b.Header.Version = 1
 	return b

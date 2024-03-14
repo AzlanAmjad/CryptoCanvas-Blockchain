@@ -2,13 +2,15 @@ package core
 
 import (
 	"fmt"
+	"os"
 	"sync"
 
 	types "github.com/AzlanAmjad/DreamscapeCanvas-Blockchain/data-types"
-	"github.com/sirupsen/logrus"
+	"github.com/go-kit/log"
 )
 
 type Blockchain struct {
+	ID           string
 	Lock         sync.RWMutex
 	BlockHeaders []*BlockHeader
 	Storage      Storage
@@ -18,13 +20,15 @@ type Blockchain struct {
 	BlockDecoder Decoder[*Block]
 	// block header hasher
 	BlockHeaderHasher Hasher[*BlockHeader]
+	Logger            log.Logger
 }
 
 // NewBlockchain creates a new empty blockchain. With the default block validator.
-func NewBlockchain(storage Storage, genesis *Block) (*Blockchain, error) {
+func NewBlockchain(storage Storage, genesis *Block, ID string) (*Blockchain, error) {
 	bc := &Blockchain{
 		BlockHeaders: make([]*BlockHeader, 0),
 		Storage:      storage,
+		ID:           ID,
 	}
 	// add default block encoder and decoder
 	bc.BlockEncoder = NewBlockEncoder()
@@ -33,17 +37,27 @@ func NewBlockchain(storage Storage, genesis *Block) (*Blockchain, error) {
 	bc.BlockHeaderHasher = NewBlockHeaderHasher()
 	// set the default block validator
 	bc.SetValidator(NewBlockValidator(bc))
+	// set the default logger
+	bc.Logger = log.NewLogfmtLogger(os.Stderr)
+	bc.Logger = log.With(bc.Logger, "ID", bc.ID)
+
 	// add the genesis block to the blockchain
 	err := bc.addBlockWithoutValidation(genesis)
+
+	// log the creation of the blockchain
+	bc.Logger.Log(
+		"msg", "blockchain created",
+		"blockchain_id", bc.ID,
+		"genesis_block_hash", genesis.GetHash(bc.BlockHeaderHasher),
+	)
+
 	return bc, err
 }
 
 // addBlockWithoutValidation adds a block to the blockchain without validation.
 func (bc *Blockchain) addBlockWithoutValidation(block *Block) error {
-	logrus.WithFields(logrus.Fields{
-		"block_index": block.Header.Index,
-		"block_hash":  block.GetHash(bc.BlockHeaderHasher),
-	}).Log(logrus.InfoLevel, "adding block to the blockchain")
+	index := block.Header.Index
+	hash := block.GetHash(bc.BlockHeaderHasher)
 
 	bc.Lock.Lock()
 	// add the block to the storage
@@ -54,6 +68,12 @@ func (bc *Blockchain) addBlockWithoutValidation(block *Block) error {
 	// add the block to the blockchain headers.
 	bc.BlockHeaders = append(bc.BlockHeaders, block.Header)
 	bc.Lock.Unlock()
+
+	bc.Logger.Log(
+		"msg", "genesis block added to the blockchain",
+		"block_index", index,
+		"block_hash", hash,
+	)
 
 	return err
 }
@@ -94,6 +114,15 @@ func (bc *Blockchain) AddBlock(block *Block) error {
 	// add the block to the blockchain headers
 	bc.BlockHeaders = append(bc.BlockHeaders, block.Header)
 	bc.Lock.Unlock()
+
+	bc.Logger.Log(
+		"msg", "block added to the blockchain",
+		"block_index", block.Header.Index,
+		"block_hash", block.GetHash(bc.BlockHeaderHasher),
+		"data_hash", block.Header.DataHash,
+		"transactions", len(block.Transactions),
+		"blockchain_height", bc.GetHeight(),
+	)
 
 	return nil
 }

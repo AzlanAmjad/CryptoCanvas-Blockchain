@@ -32,6 +32,7 @@ func NewBlockEncoder() *BlockEncoder {
 
 func (e *BlockEncoder) Encode(w io.Writer, b *Block) error {
 	enc := gob.NewEncoder(w)
+	fmt.Println("encoding block index: ", b.Header.Index)
 	err := enc.Encode(b.Header.Index)
 	if err != nil {
 		return fmt.Errorf("failed to encode block header: %s", err)
@@ -55,6 +56,7 @@ func (d *BlockDecoder) Decode(r io.Reader, b *Block) error {
 	if err != nil {
 		return fmt.Errorf("failed to decode block header: %s", err)
 	}
+	fmt.Println("decoded block index: ", Index)
 
 	// TODO (Azlan): Finish Decoding the block
 

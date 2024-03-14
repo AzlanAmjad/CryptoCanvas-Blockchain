@@ -66,11 +66,17 @@ func TestBroadcast(t *testing.T) {
 	// new goroutines to receive the messages
 	go func() {
 		received1 := <-t2.Consume()
-		assert.Equal(t, received1.Payload, &msg)
+		t.Log("received1", received1)
+		buf := bytes.Buffer{}
+		buf.ReadFrom(received1.Payload)
+		assert.Equal(t, buf.Bytes(), msg.Bytes())
 	}()
 
 	go func() {
 		received2 := <-t3.Consume()
-		assert.Equal(t, received2.Payload, &msg)
+		t.Log("received2", received2)
+		buf := bytes.Buffer{}
+		buf.ReadFrom(received2.Payload)
+		assert.Equal(t, buf.Bytes(), msg.Bytes())
 	}()
 }

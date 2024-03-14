@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"fmt"
 	"sync"
+
+	"github.com/sirupsen/logrus"
 )
 
 /*
@@ -43,7 +45,9 @@ func (t *LocalTransport) SendToChannel(rpc ReceiveRPC) error {
 func (t *LocalTransport) Connect(other Transport) error {
 	t.Lock.Lock()
 	defer t.Lock.Unlock()
-	t.Peers[other.GetAddr()] = other
+	otherAddr := other.GetAddr()
+	// make other pointer to LocalTransport
+	t.Peers[otherAddr] = other
 	return nil
 }
 
@@ -51,10 +55,15 @@ func (t *LocalTransport) Connect(other Transport) error {
 func (t *LocalTransport) SendMessageToPeer(rpc SendRPC) error {
 	t.Lock.RLock()
 	defer t.Lock.RUnlock()
-	if peer, ok := t.Peers[rpc.To]; ok {
+	peer, ok := t.Peers[rpc.To]
+	if ok {
 		peer.SendToChannel(ReceiveRPC{From: t.GetAddr(), Payload: rpc.Payload})
 	} else {
-		return fmt.Errorf("peer %s not found", rpc.To)
+		keys := make([]string, 0, len(t.Peers))
+		for key := range t.Peers {
+			keys = append(keys, string(key))
+		}
+		return fmt.Errorf("peer %s not found, peers keys: %s", rpc.To, keys)
 	}
 	return nil
 }
@@ -67,7 +76,11 @@ func (t *LocalTransport) GetAddr() NetAddr {
 // method to broadcast a message to all peers, used by transport itself
 func (t *LocalTransport) Broadcast(payload []byte) error {
 	for _, peer := range t.Peers {
-		peer.SendMessageToPeer(SendRPC{To: peer.GetAddr(), Payload: bytes.NewReader(payload)})
+		err := t.SendMessageToPeer(SendRPC{To: peer.GetAddr(), Payload: bytes.NewReader(payload)})
+		if err != nil {
+			logrus.WithError(err).Error("error sending message to peer")
+			return err
+		}
 	}
 	return nil
 }
