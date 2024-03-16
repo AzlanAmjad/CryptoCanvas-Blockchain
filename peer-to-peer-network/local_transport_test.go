@@ -1,6 +1,7 @@
 package network
 
 import (
+	"bytes"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -30,11 +31,52 @@ func TestSendMessage(t *testing.T) {
 	t1.Connect(t2)
 	t2.Connect(t1)
 
-	msg := "hello"
+	msg := bytes.Buffer{}
+	msg.Write([]byte("hello"))
 	// new goroutine to send the message
-	go t1.SendMessageToPeer(SendRPC{To: addr2, Payload: []byte(msg)})
+	go t1.SendMessageToPeer(SendRPC{To: addr2, Payload: &msg})
 
 	received := <-t2.Consume()
 	assert.Equal(t, received.From, addr1)
-	assert.Equal(t, received.Payload, []byte(msg))
+	assert.Equal(t, received.Payload, &msg)
+}
+
+func TestBroadcast(t *testing.T) {
+	var addr1 NetAddr = "addr1"
+	var addr2 NetAddr = "addr2"
+	var addr3 NetAddr = "addr3"
+
+	t1 := NewLocalTransport(addr1)
+	t2 := NewLocalTransport(addr2)
+	t3 := NewLocalTransport(addr3)
+
+	t1.Connect(t2)
+	t1.Connect(t3)
+	t2.Connect(t1)
+	t2.Connect(t3)
+	t3.Connect(t1)
+	t3.Connect(t2)
+
+	msg := bytes.Buffer{}
+	msg.Write([]byte("hello"))
+
+	// new goroutine to send the message
+	go t1.Broadcast(msg.Bytes())
+
+	// new goroutines to receive the messages
+	go func() {
+		received1 := <-t2.Consume()
+		t.Log("received1", received1)
+		buf := bytes.Buffer{}
+		buf.ReadFrom(received1.Payload)
+		assert.Equal(t, buf.Bytes(), msg.Bytes())
+	}()
+
+	go func() {
+		received2 := <-t3.Consume()
+		t.Log("received2", received2)
+		buf := bytes.Buffer{}
+		buf.ReadFrom(received2.Payload)
+		assert.Equal(t, buf.Bytes(), msg.Bytes())
+	}()
 }

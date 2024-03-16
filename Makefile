@@ -6,6 +6,9 @@ build:
 run: build
 	./bin/$(APP_NAME)
 
+run-verbose: build
+	./bin/$(APP_NAME) -v
+
 test:
 	go test -race ./...
 

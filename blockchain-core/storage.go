@@ -1,6 +1,10 @@
 package core
 
 import (
+	"bytes"
+	"encoding/binary"
+	"fmt"
+
 	"github.com/syndtr/goleveldb/leveldb"
 )
 
@@ -18,6 +22,7 @@ type LevelDBStorage struct {
 
 // NewLevelDBStorage creates a new LevelDBStorage.
 func NewLevelDBStorage(dbPath string) (*LevelDBStorage, error) {
+	fmt.Println("Creating a new LevelDBStorage at path:", dbPath)
 	db, err := leveldb.OpenFile(dbPath, nil)
 	if err != nil {
 		return nil, err
@@ -27,14 +32,35 @@ func NewLevelDBStorage(dbPath string) (*LevelDBStorage, error) {
 
 // Put adds a block to the database.
 func (s *LevelDBStorage) Put(block *Block, enc Encoder[*Block]) error {
-	// NOTE: TO BE IMPLEMENTED, MUST HAVE BLOCK ENCODING IMPLEMENTED FIRST
+	key := make([]byte, 4)
+	binary.LittleEndian.PutUint32(key, block.Header.Index)
+	value := bytes.Buffer{}
+	err := block.Encode(&value, enc)
+	if err != nil {
+		return err
+	}
+	err = s.DB.Put(key, value.Bytes(), nil)
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
 // Get returns a block from the database.
 func (s *LevelDBStorage) Get(index uint32, dec Decoder[*Block]) (*Block, error) {
 	// NOTE: TO BE IMPLEMENTED, MUST HAVE BLOCK DECODING IMPLEMENTED FIRST
-	return nil, nil
+	key := make([]byte, 4)
+	binary.LittleEndian.PutUint32(key, index)
+	value, err := s.DB.Get(key, nil)
+	if err != nil {
+		return nil, err
+	}
+	block := NewBlock()
+	err = block.Decode(bytes.NewReader(value), dec)
+	if err != nil {
+		return nil, err
+	}
+	return block, nil
 }
 
 // Shutdown closes the database.

@@ -9,6 +9,24 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+func randomTransactionWithSignature(t *testing.T) *Transaction {
+	// Create a new private key.
+	privateKey := crypto.GeneratePrivateKey()
+
+	// Create a new transaction.
+	transaction := &Transaction{
+		Data: []byte("Hello, world!"),
+	}
+
+	// Sign the transaction with the private key.
+	err := transaction.Sign(&privateKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return transaction
+}
+
 func TestTransactionSignAndVerifyPass(t *testing.T) {
 	// Create a new private key.
 	privateKey := crypto.GeneratePrivateKey()

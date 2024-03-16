@@ -24,7 +24,7 @@ type Transaction struct {
 		mechanisms like logical timestamps or totally ordered broadcast, which are more suitable for
 		ordering events across different nodes in a distributed system.
 	*/
-	firstSeen int64
+	FirstSeen int64
 }
 
 // NewTransaction creates a new transaction.
@@ -67,12 +67,12 @@ func (t *Transaction) VerifySignature() (bool, error) {
 
 // SetFirstSeen sets the firstSeen timestamp of the transaction.
 func (t *Transaction) SetFirstSeen(timestamp int64) {
-	t.firstSeen = timestamp
+	t.FirstSeen = timestamp
 }
 
 // GetFirstSeen returns the firstSeen timestamp of the transaction.
 func (t *Transaction) GetFirstSeen() int64 {
-	return t.firstSeen
+	return t.FirstSeen
 }
 
 // Encode encodes a transaction to a writer, in a modular fashion.
