@@ -80,12 +80,7 @@ func DefaultRPCDecoder(rpc ReceiveRPC) (*DecodedMessage, error) {
 		if err != nil {
 			return nil, err
 		}
-		fmt.Println("block_index", block.Header.Index)
-		fmt.Println("block_transactions", block.Transactions)
-		fmt.Println("block_version", block.Header.Version)
-		fmt.Println("block_prev_block_hash", block.Header.PrevBlockHash)
-		fmt.Println("block_data_hash", block.Header.DataHash)
-		return &DecodedMessage{Header: msg.Header, From: rpc.From, Message: block}, nil
+		return &DecodedMessage{Header: msg.Header, From: rpc.From, Message: *block}, nil
 	default:
 		return nil, fmt.Errorf("unknown message type: %d", msg.Header)
 	}

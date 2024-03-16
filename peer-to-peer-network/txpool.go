@@ -38,6 +38,9 @@ func (t *TxPool) Add(tx *core.Transaction) error {
 	if err != nil {
 		return err
 	}
+	// NOTE: we are not checking to see if Pending has exceeded MaxLength
+	// because pending transactions need to be included in the next block,
+	// and should be flushed regularly
 	// check if all is longer than max length
 	if t.All.Len() > t.MaxLength {
 		// remove the oldest transaction

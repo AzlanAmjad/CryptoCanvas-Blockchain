@@ -61,6 +61,17 @@ func main() {
 	go remoteServerB.Start()
 	go remoteServerC.Start()
 
+	// We will create a remote server, which will join late
+	go func() {
+		// make a remote server which joins late
+		time.Sleep(7 * time.Second)
+
+		transportRemoteD := network.NewLocalTransport("RemoteD")
+		transportRemoteC.Connect(transportRemoteD)
+		remoteServerD := makeServer("RemoteServerD", transportRemoteD, nil)
+		remoteServerD.Start()
+	}()
+
 	// We will create a local server with the local transport.
 	// only local server will be the validator here in this simulated environment.
 	localServer := makeServer("LocalServer", transportLocal, &privateKey)

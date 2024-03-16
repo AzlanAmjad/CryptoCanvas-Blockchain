@@ -177,7 +177,6 @@ func (s *Server) ProcessMessage(decodedMessage *DecodedMessage) error {
 	case Block:
 		block, ok := decodedMessage.Message.(core.Block)
 		if !ok {
-			print(decodedMessage.Message)
 			return fmt.Errorf("failed to cast message to block")
 		}
 		return s.processBlock(&block)
@@ -218,12 +217,10 @@ func (s *Server) broadcastTx(tx *core.Transaction) {
 // broadcast the block to all known peers, eventually consistency model
 func (s *Server) broadcastBlock(block *core.Block) {
 	s.ServerOptions.Logger.Log("msg", "Broadcasting block", "hash", block.GetHash(s.chain.BlockHeaderHasher))
-	fmt.Println("block_index", block.Header.Index)
 
 	// encode the block, and put it in a message, and broadcast it to the network.
 	blockBytes := bytes.Buffer{}
-	enc := core.NewBlockEncoder()
-	err := block.Encode(&blockBytes, enc)
+	err := block.Encode(&blockBytes, s.chain.BlockEncoder)
 	if err != nil {
 		logrus.WithError(err).Error("Failed to encode block")
 		return
@@ -238,7 +235,7 @@ func (s *Server) broadcastBlock(block *core.Block) {
 // handling blocks coming into the blockchain
 // two ways:
 // 1. through another block that is forwarding the block to known peers
-// 2. the leader node chose through consensus has created a new block, and is broadcasting it to us
+// 2. the leader node chosen through consensus has created a new block, and is broadcasting it to us
 func (s *Server) processBlock(block *core.Block) error {
 	blockHash := block.GetHash(s.chain.BlockHeaderHasher)
 	s.ServerOptions.Logger.Log("msg", "Received new block", "hash", blockHash)
@@ -247,6 +244,10 @@ func (s *Server) processBlock(block *core.Block) error {
 	// of the block before addition
 	err := s.chain.AddBlock(block)
 	if err != nil {
+		// we return here so we don't broadcast to our peers
+		// this is because if we have already added the block
+		// which is possibly why we are in this error condition, then we
+		// have already broadcasted the block to our peers previously.
 		return err
 	}
 
@@ -265,7 +266,7 @@ func (s *Server) processBlock(block *core.Block) error {
 func (s *Server) processTransaction(tx *core.Transaction) error {
 	transaction_hash := tx.GetHash(s.memPool.Pending.TransactionHasher)
 
-	s.ServerOptions.Logger.Log("msg", "Received new transaction", "hash", transaction_hash)
+	//s.ServerOptions.Logger.Log("msg", "Received new transaction", "hash", transaction_hash)
 
 	// check if transaction exists
 	if s.memPool.PendingHas(tx.GetHash(s.memPool.Pending.TransactionHasher)) {
@@ -297,7 +298,7 @@ func (s *Server) processTransaction(tx *core.Transaction) error {
 	// broadcast the transaction to the network (all peers)
 	go s.broadcastTx(tx)
 
-	s.ServerOptions.Logger.Log("msg", "Adding transaction to mempool", "hash", transaction_hash, "memPoolSize", s.memPool.PendingLen())
+	//s.ServerOptions.Logger.Log("msg", "Adding transaction to mempool", "hash", transaction_hash, "memPoolSize", s.memPool.PendingLen())
 
 	// add transaction to mempool
 	return s.memPool.Add(tx)

@@ -24,7 +24,7 @@ func getRandomBlock(t *testing.T, index uint32, prevBlockHash types.Hash) *Block
 	assert.NotNil(t, b)
 
 	// data hash
-	dataHash, err := CalculateDataHash(b.Transactions, b.transactionEncoder)
+	dataHash, err := CalculateDataHash(b.Transactions, b.TransactionEncoder)
 	if err != nil {
 		t.Fatalf("failed to calculate data hash: %s", err)
 	}
@@ -176,5 +176,7 @@ func TestBlockEncodeDecode(t *testing.T) {
 	assert.NoError(t, err)
 
 	// verify the decoded block
-	assert.Equal(t, b.Header.Index, decodedBlock.Header.Index)
+	assert.Equal(t, b, decodedBlock)
+	ok, _ := decodedBlock.VerifySignature()
+	assert.True(t, ok)
 }

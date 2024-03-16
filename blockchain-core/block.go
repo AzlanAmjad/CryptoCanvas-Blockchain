@@ -39,12 +39,17 @@ type Block struct {
 	Validator    crypto.PublicKey
 	Signature    *crypto.Signature
 
+	// everything below should not be encoded
+
 	// cached block header hash
 	hash types.Hash
 
 	// transaction encoder and decoder
-	transactionEncoder Encoder[*Transaction]
-	transactionDecoder Decoder[*Transaction]
+	TransactionEncoder Encoder[*Transaction]
+	TransactionDecoder Decoder[*Transaction]
+
+	// transaction hasher
+	TransactionHasher Hasher[*Transaction]
 }
 
 // NewBlock creates a new block. Returns a default block to use.
@@ -59,9 +64,13 @@ func NewBlock() *Block {
 			Index:         0,
 		},
 		Transactions: []*Transaction{},
+		Validator:    crypto.PublicKey{},
+
 		// default transaction encoder and decoder
-		transactionEncoder: NewTransactionEncoder(),
-		transactionDecoder: NewTransactionDecoder(),
+		TransactionEncoder: NewTransactionEncoder(),
+		TransactionDecoder: NewTransactionDecoder(),
+		// default transaction hasher
+		TransactionHasher: NewTransactionHasher(),
 	}
 }
 
@@ -70,7 +79,7 @@ func NewBlockWithTransactions(transactions []*Transaction) *Block {
 	b.Transactions = transactions
 
 	// calculate data hash
-	dataHash, err := CalculateDataHash(b.Transactions, b.transactionEncoder)
+	dataHash, err := CalculateDataHash(b.Transactions, b.TransactionEncoder)
 	if err != nil {
 		panic(err)
 	}
@@ -111,10 +120,10 @@ func (b *Block) VerifySignature() (bool, error) {
 	}
 
 	// Verify the block data hash
-	if b.transactionEncoder == nil {
+	if b.TransactionEncoder == nil {
 		return false, fmt.Errorf("no transaction encoder")
 	}
-	dataHash, err := CalculateDataHash(b.Transactions, b.transactionEncoder)
+	dataHash, err := CalculateDataHash(b.Transactions, b.TransactionEncoder)
 	if err != nil {
 		return false, err
 	}

@@ -59,3 +59,21 @@ func TestGetTransactionInSortedOrder(t *testing.T) {
 	assert.Equal(t, tx2, transactions[1])
 	assert.Equal(t, tx3, transactions[2])
 }
+
+func TestTxPoolPruning(t *testing.T) {
+	// pool with maxLen 2
+	txPool := NewTxPool(2)
+
+	// add 3 transactions
+	tx1 := core.NewTransaction([]byte("tx1"))
+	tx2 := core.NewTransaction([]byte("tx2"))
+	tx3 := core.NewTransaction([]byte("tx3"))
+
+	txPool.Add(tx1)
+	txPool.Add(tx2)
+	txPool.Add(tx3)
+
+	// tx1 should be pruned
+	assert.False(t, txPool.AllHas(tx1.GetHash(txPool.All.TransactionHasher)))
+	assert.Equal(t, 2, txPool.AllLen())
+}

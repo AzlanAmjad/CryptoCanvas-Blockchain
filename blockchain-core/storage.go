@@ -32,12 +32,14 @@ func NewLevelDBStorage(dbPath string) (*LevelDBStorage, error) {
 
 // Put adds a block to the database.
 func (s *LevelDBStorage) Put(block *Block, enc Encoder[*Block]) error {
-	// NOTE: TO BE IMPLEMENTED, MUST HAVE BLOCK ENCODING IMPLEMENTED FIRST
 	key := make([]byte, 4)
 	binary.LittleEndian.PutUint32(key, block.Header.Index)
 	value := bytes.Buffer{}
-	block.Encode(&value, NewBlockEncoder())
-	err := s.DB.Put(key, value.Bytes(), nil)
+	err := block.Encode(&value, enc)
+	if err != nil {
+		return err
+	}
+	err = s.DB.Put(key, value.Bytes(), nil)
 	if err != nil {
 		return err
 	}
@@ -54,7 +56,10 @@ func (s *LevelDBStorage) Get(index uint32, dec Decoder[*Block]) (*Block, error) 
 		return nil, err
 	}
 	block := NewBlock()
-	block.Decode(bytes.NewReader(value), NewBlockDecoder())
+	err = block.Decode(bytes.NewReader(value), dec)
+	if err != nil {
+		return nil, err
+	}
 	return block, nil
 }
 

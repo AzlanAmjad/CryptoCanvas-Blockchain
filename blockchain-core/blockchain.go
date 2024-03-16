@@ -30,6 +30,7 @@ func NewBlockchain(storage Storage, genesis *Block, ID string) (*Blockchain, err
 		Storage:      storage,
 		ID:           ID,
 	}
+
 	// add default block encoder and decoder
 	bc.BlockEncoder = NewBlockEncoder()
 	bc.BlockDecoder = NewBlockDecoder()
@@ -116,7 +117,7 @@ func (bc *Blockchain) AddBlock(block *Block) error {
 	bc.Lock.Unlock()
 
 	bc.Logger.Log(
-		"msg", "block added to the blockchain",
+		"msg", "Block added to the blockchain",
 		"block_index", block.Header.Index,
 		"block_hash", block.GetHash(bc.BlockHeaderHasher),
 		"data_hash", block.Header.DataHash,

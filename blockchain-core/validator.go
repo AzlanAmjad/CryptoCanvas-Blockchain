@@ -51,7 +51,7 @@ func (bv *BlockValidator) ValidateBlock(block *Block) error {
 	}
 	// 7. check if the block data hash is valid
 	if block.Header.Index > 0 { // if the block is not the genesis block
-		dataHash, err := CalculateDataHash(block.Transactions, block.transactionEncoder)
+		dataHash, err := CalculateDataHash(block.Transactions, block.TransactionEncoder)
 		if err != nil {
 			return fmt.Errorf("failed to calculate data hash, block index: %d, blockchain height: %d", block.Header.Index, bv.BC.GetHeight())
 		}
