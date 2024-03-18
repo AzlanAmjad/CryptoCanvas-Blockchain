@@ -3,7 +3,8 @@ package main
 import (
 	"bytes"
 	"crypto/rand"
-	"time"
+	"fmt"
+	"net"
 
 	core "github.com/AzlanAmjad/DreamscapeCanvas-Blockchain/blockchain-core"
 	crypto "github.com/AzlanAmjad/DreamscapeCanvas-Blockchain/cryptography"
@@ -12,79 +13,65 @@ import (
 )
 
 func main() {
-	// Start of the main function.
+	// entry point
 
-	// This is our local node, so we have a transport for our own node server.
-	// We will have peers, which are remote peers, which will represent servers in the P2P network which are not our machine.
-	transportLocal := network.NewLocalTransport("Local")
+	// ask user for node ID
+	var id string
+	logrus.Info("Enter the node ID: ")
+	_, err := fmt.Scanln(&id)
+	if err != nil {
+		logrus.WithError(err).Fatal("Failed to read node ID")
+	}
 
-	// Remote peers will have their own transport, which will be different from the local transport.
-	// We will have a transport for each peer.
+	// ask user what port to listen on
+	var port string
+	logrus.Info("Enter the port to listen on: ")
+	_, err = fmt.Scanln(&port)
+	if err != nil {
+		logrus.WithError(err).Fatal("Failed to read port")
+	}
+	// create net.Addr for a TCP connection
+	addr, err := net.ResolveTCPAddr("tcp", "localhost:"+port)
+	if err != nil {
+		logrus.WithError(err).Fatal("Failed to resolve TCP address")
+	}
 
-	// Normally messages will go over RPC to the remote peers, but for now, we will just send messages to the remote transport.
-	transportRemoteA := network.NewLocalTransport("RemoteA")
-	transportRemoteB := network.NewLocalTransport("RemoteB")
-	transportRemoteC := network.NewLocalTransport("RemoteC")
+	// ask user if this node is a validator
+	var isValidator string
+	logrus.Info("Is this node a validator? (y/n): ")
+	_, err = fmt.Scanln(&isValidator)
+	if err != nil {
+		logrus.WithError(err).Fatal("Failed to read input")
+	}
 
-	// mock client transport that will send transactions to the local transport
-	transportMockClient := network.NewLocalTransport(("MockClient"))
-	transportMockClient.Connect(transportLocal)
+	var localNode *network.Server
+	if isValidator == "y" {
+		// generate private key
+		privateKey := crypto.GeneratePrivateKey()
+		// create local node
+		localNode = makeServer(id, &privateKey, addr)
+	} else {
+		// create local node
+		localNode = makeServer(id, nil, addr)
+	}
 
-	// Connect one transport to another, not all are connected, blockchain will use the gossip architecture to
-	// propagate transactions and blocks across the simulated network.
-	// Note connect method for TCP and UDP will be different, than the local transport.
-	transportLocal.Connect(transportRemoteA)
-	transportRemoteA.Connect(transportRemoteB)
-	transportRemoteB.Connect(transportRemoteC)
+	// start local node
+	go localNode.Start()
 
-	// We will simulate the remote peer sending a message to the local peer, in a goroutine (thread).
-	go func() {
-		for {
-			// We will simulate the mock client sending a message to the local.
-			if err := sendTransaction(transportMockClient, transportLocal.GetAddr()); err != nil {
-				logrus.WithError(err).Error("Failed to send transaction")
-			}
-			time.Sleep(3 * time.Second)
-		}
-	}()
-
-	// Generate private key for server
-	privateKey := crypto.GeneratePrivateKey()
-
-	// We will create a remote server with the remote transports, to simulate the remote peers.
-	remoteServerA := makeServer("RemoteServerA", transportRemoteA, nil)
-	remoteServerB := makeServer("RemoteServerB", transportRemoteB, nil)
-	remoteServerC := makeServer("RemoteServerC", transportRemoteC, nil)
-
-	// separate go routine so we don't block the main thread
-	go remoteServerA.Start()
-	go remoteServerB.Start()
-	go remoteServerC.Start()
-
-	// We will create a remote server, which will join late
-	go func() {
-		// make a remote server which joins late
-		time.Sleep(7 * time.Second)
-
-		transportRemoteD := network.NewLocalTransport("RemoteD")
-		transportRemoteC.Connect(transportRemoteD)
-		remoteServerD := makeServer("RemoteServerD", transportRemoteD, nil)
-		remoteServerD.Start()
-	}()
-
-	// We will create a local server with the local transport.
-	// only local server will be the validator here in this simulated environment.
-	localServer := makeServer("LocalServer", transportLocal, &privateKey)
-
-	// Start the local server
-	localServer.Start()
+	select {}
 }
 
-func makeServer(id string, tr network.Transport, privateKey *crypto.PrivateKey) *network.Server {
-	// We will have a server which will contain the transport. And any other transport we add in the future.
+func makeServer(id string, privateKey *crypto.PrivateKey, addr net.Addr) *network.Server {
+	// one seed node, hardcoded at port 8000
+	seedAddr, err := net.ResolveTCPAddr("tcp", "localhost:8000")
+	if err != nil {
+		logrus.WithError(err).Fatal("Failed to resolve TCP address")
+	}
+
 	serverOptions := network.ServerOptions{
-		ID:         id,
-		Transports: []network.Transport{tr},
+		Addr:      addr,
+		ID:        id,
+		SeedNodes: []net.Addr{seedAddr},
 	}
 	if privateKey != nil {
 		serverOptions.PrivateKey = privateKey
@@ -98,12 +85,25 @@ func makeServer(id string, tr network.Transport, privateKey *crypto.PrivateKey) 
 	return server
 }
 
-func sendTransaction(tr network.Transport, to network.NetAddr) error {
+func tcp_tester() {
+	conn, err := net.Dial("tcp", "localhost:8080")
+	if err != nil {
+		logrus.WithError(err).Fatal("Failed to dial")
+	}
+
+	tx := makeTransactionMessage()
+	_, err = conn.Write(tx)
+	if err != nil {
+		panic(err)
+	}
+}
+
+func makeTransactionMessage() []byte {
 	// Generate a random byte slice
 	randomBytes := make([]byte, 32)
 	_, err := rand.Read(randomBytes)
 	if err != nil {
-		return err
+		logrus.WithError(err).Fatal("Failed to generate random bytes")
 	}
 
 	tx := core.NewTransaction(randomBytes)
@@ -120,12 +120,5 @@ func sendTransaction(tr network.Transport, to network.NetAddr) error {
 
 	// create a message
 	msg := network.NewMessage(network.Transaction, buf.Bytes())
-
-	// send the message
-	err = tr.SendMessageToPeer(network.SendRPC{To: to, Payload: bytes.NewReader(msg.Bytes())})
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return msg.Bytes()
 }

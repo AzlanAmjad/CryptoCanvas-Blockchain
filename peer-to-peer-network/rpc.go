@@ -5,19 +5,20 @@ import (
 	"encoding/gob"
 	"fmt"
 	"io"
+	"net"
 
 	core "github.com/AzlanAmjad/DreamscapeCanvas-Blockchain/blockchain-core"
 )
 
 // SendRPC is a struct containing the address to send to and the payload to send.
 type SendRPC struct {
-	To      NetAddr
+	To      net.Addr
 	Payload io.Reader
 }
 
 // ReceiveRPC is a struct containing the address received from and the payload received.
 type ReceiveRPC struct {
-	From    NetAddr
+	From    net.Addr
 	Payload io.Reader
 }
 
@@ -51,7 +52,7 @@ func (m *Message) Bytes() []byte {
 
 type DecodedMessage struct {
 	Header  MessageType
-	From    NetAddr
+	From    net.Addr
 	Message any
 }
 
@@ -88,5 +89,5 @@ func DefaultRPCDecoder(rpc ReceiveRPC) (*DecodedMessage, error) {
 
 // RPCProcessor is an interface for processing RPCs.
 type RPCProcessor interface {
-	ProcessMessage(*DecodedMessage) error
+	ProcessMessage(net.Addr, *DecodedMessage) error
 }

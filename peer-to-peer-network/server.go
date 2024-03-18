@@ -3,6 +3,7 @@ package network
 import (
 	"bytes"
 	"fmt"
+	"net"
 	"os"
 	"time"
 
@@ -21,11 +22,12 @@ var defaultBlockTime = 5 * time.Second
 
 // One node can have multiple transports, for example, a TCP transport and a UDP transport.
 type ServerOptions struct {
+	SeedNodes     []net.Addr
+	Addr          net.Addr
 	ID            string
 	Logger        log.Logger
 	RPCDecodeFunc RPCDecodeFunc
 	RPCProcessor  RPCProcessor
-	Transports    []Transport
 	PrivateKey    *crypto.PrivateKey
 	// if a node / server is elect as a validator, server needs to know when its time to consume its mempool and create a new block.
 	BlockTime      time.Duration
@@ -33,11 +35,14 @@ type ServerOptions struct {
 }
 
 type Server struct {
+	TCPTransport  *TCPTransport
+	Peers         map[net.Addr]*TCPPeer
 	ServerOptions ServerOptions
 	isValidator   bool
 	// holds transactions that are not yet included in a block.
 	memPool     *TxPool
 	rpcChannel  chan ReceiveRPC
+	peerChannel chan *TCPPeer
 	quitChannel chan bool
 	chain       *core.Blockchain
 }
@@ -68,13 +73,24 @@ func NewServer(options ServerOptions) (*Server, error) {
 		return nil, err
 	}
 
+	// create a channel to receive peers from the transport
+	peerCh := make(chan *TCPPeer)
+	// create the TCP transport
+	tcpTransport, err := NewTCPTransport(options.Addr, peerCh, options.ID)
+	if err != nil {
+		logrus.WithError(err).Fatal("Failed to create TCP transport")
+	}
+
 	s := &Server{
+		TCPTransport:  tcpTransport,
+		Peers:         make(map[net.Addr]*TCPPeer),
 		ServerOptions: options,
 		// Validators will have private keys, so they can sign blocks.
 		// Note: only one validator can be elected, one source of truth, one miner in the whole network.
 		isValidator: options.PrivateKey != nil,
 		memPool:     NewTxPool(options.MaxMemPoolSize),
 		rpcChannel:  make(chan ReceiveRPC),
+		peerChannel: peerCh,
 		quitChannel: make(chan bool),
 		chain:       bc,
 	}
@@ -104,30 +120,66 @@ func NewServer(options ServerOptions) (*Server, error) {
 	return s, nil
 }
 
+// dial the seed nodes, and add them to the list of peers
+func (s *Server) bootstrapNetwork() {
+	// dial the seed nodes
+	for _, seed := range s.ServerOptions.SeedNodes {
+		// make sure the peer is not ourselves
+		if s.TCPTransport.Addr.String() != seed.String() {
+			// dial the seed node
+			conn, err := net.Dial("tcp", seed.String())
+			if err != nil {
+				logrus.WithError(err).Error("Failed to dial seed node")
+				continue
+			}
+
+			fmt.Println("Dialed seed node", seed.String())
+
+			// create a new peer
+			peer := &TCPPeer{conn: conn, Incoming: false} // we initiated this connection so Incoming is false
+			// send peer to server peer channel
+			s.peerChannel <- peer
+		} else {
+			// log that we are not dialing ourselves
+			s.ServerOptions.Logger.Log("msg", "We are a seed node, not dialing ourselves", "seed", seed)
+		}
+	}
+}
+
 // Start will start the server.
 // This is the core of the server, where the server will listen for messages from the transports.
 // We make calls to helper functions for processing from here.
-func (s *Server) Start() {
-	err := s.initTransports()
-	if err != nil {
-		logrus.WithError(err).Error("Failed to initialize transports")
-		return
-	}
+func (s *Server) Start() error {
+	s.ServerOptions.Logger.Log("msg", "Starting main server loop", "server_id", s.ServerOptions.ID)
+	// start the transport
+	s.TCPTransport.Start()
+	// bootstrap the network
+	go s.bootstrapNetwork()
 
 	// Run the server in a loop forever.
-	s.ServerOptions.Logger.Log("msg", "Starting main server loop", "server_id", s.ServerOptions.ID)
-
 	for {
 		select {
-		case message := <-s.rpcChannel:
+		// receive a new peer, we either connected via
+		// 1. Seed node dialing
+		// 2. Another peer dialed us
+		case peer := <-s.peerChannel:
+			// TODO (Azlan): Add mutex to protect the Peers map.
+			// Add the peer to the list of peers.
+			s.Peers[peer.conn.RemoteAddr()] = peer
+			// print that peer was added
+			s.ServerOptions.Logger.Log("msg", "Peer added", "us", peer.conn.LocalAddr(), "peer", peer.conn.RemoteAddr())
+			// start reading from the peer
+			go peer.readLoop(s.rpcChannel)
+		// receive RPC message to process
+		case rpc := <-s.rpcChannel:
 			// Decode the message.
-			decodedMessage, err := s.ServerOptions.RPCDecodeFunc(message)
+			decodedMessage, err := s.ServerOptions.RPCDecodeFunc(rpc)
 			if err != nil {
 				logrus.WithError(err).Error("Failed to decode message")
 				continue
 			}
 			// Process the message.
-			err = s.ServerOptions.RPCProcessor.ProcessMessage(decodedMessage)
+			err = s.ServerOptions.RPCProcessor.ProcessMessage(rpc.From, decodedMessage)
 			if err != nil {
 				logrus.WithError(err).Error("Failed to process message")
 			}
@@ -137,7 +189,7 @@ func (s *Server) Start() {
 			// Quit the server.
 			fmt.Println("Quitting the server.")
 			s.handleQuit()
-			return
+			return nil
 		}
 	}
 }
@@ -164,8 +216,8 @@ func (s *Server) validatorLoop() {
 	}
 }
 
-func (s *Server) ProcessMessage(decodedMessage *DecodedMessage) error {
-	//s.ServerOptions.Logger.Log("msg", "Processing message", "type", decodedMessage.Header, "from", decodedMessage.From)
+func (s *Server) ProcessMessage(from net.Addr, decodedMessage *DecodedMessage) error {
+	s.ServerOptions.Logger.Log("msg", "Processing message", "type", decodedMessage.Header, "from", decodedMessage.From)
 
 	switch decodedMessage.Header {
 	case Transaction:
@@ -173,30 +225,35 @@ func (s *Server) ProcessMessage(decodedMessage *DecodedMessage) error {
 		if !ok {
 			return fmt.Errorf("failed to cast message to transaction")
 		}
-		return s.processTransaction(&tx)
+		return s.processTransaction(from, &tx)
 	case Block:
 		block, ok := decodedMessage.Message.(core.Block)
 		if !ok {
 			return fmt.Errorf("failed to cast message to block")
 		}
-		return s.processBlock(&block)
+		return s.processBlock(from, &block)
 	default:
 		return fmt.Errorf("unknown message type: %d", decodedMessage.Header)
 	}
 }
 
-func (s *Server) broadcast(payload []byte) error {
-	for _, transport := range s.ServerOptions.Transports {
-		err := transport.Broadcast(payload)
-		if err != nil {
-			return err
+func (s *Server) broadcast(from net.Addr, payload []byte) error {
+	for _, peer := range s.Peers {
+		// don't send the message back to the peer that sent it to us
+		// nil condition is checked because this data might not be from anyone
+		// but from the node itself, for example, when a new block is created.
+		if from == nil || peer.conn.RemoteAddr().String() != from.String() {
+			err := peer.Send(payload)
+			if err != nil {
+				logrus.WithError(err).Error("Failed to send message to peer")
+			}
 		}
 	}
 	return nil
 }
 
 // broadcast the transaction to all known peers, eventually consistency model
-func (s *Server) broadcastTx(tx *core.Transaction) {
+func (s *Server) broadcastTx(from net.Addr, tx *core.Transaction) {
 	//s.ServerOptions.Logger.Log("msg", "Broadcasting transaction", "hash", tx.GetHash(s.memPool.TransactionHasher))
 
 	// encode the transaction, and put it in a message, and broadcast it to the network.
@@ -208,14 +265,14 @@ func (s *Server) broadcastTx(tx *core.Transaction) {
 		return
 	}
 	msg := NewMessage(Transaction, transactionBytes.Bytes())
-	err = s.broadcast(msg.Bytes())
+	err = s.broadcast(from, msg.Bytes())
 	if err != nil {
 		logrus.WithError(err).Error("Failed to broadcast transaction")
 	}
 }
 
 // broadcast the block to all known peers, eventually consistency model
-func (s *Server) broadcastBlock(block *core.Block) {
+func (s *Server) broadcastBlock(from net.Addr, block *core.Block) {
 	s.ServerOptions.Logger.Log("msg", "Broadcasting block", "hash", block.GetHash(s.chain.BlockHeaderHasher))
 
 	// encode the block, and put it in a message, and broadcast it to the network.
@@ -226,7 +283,7 @@ func (s *Server) broadcastBlock(block *core.Block) {
 		return
 	}
 	msg := NewMessage(Block, blockBytes.Bytes())
-	err = s.broadcast(msg.Bytes())
+	err = s.broadcast(from, msg.Bytes())
 	if err != nil {
 		logrus.WithError(err).Error("Failed to broadcast block")
 	}
@@ -236,7 +293,7 @@ func (s *Server) broadcastBlock(block *core.Block) {
 // two ways:
 // 1. through another block that is forwarding the block to known peers
 // 2. the leader node chosen through consensus has created a new block, and is broadcasting it to us
-func (s *Server) processBlock(block *core.Block) error {
+func (s *Server) processBlock(from net.Addr, block *core.Block) error {
 	blockHash := block.GetHash(s.chain.BlockHeaderHasher)
 	s.ServerOptions.Logger.Log("msg", "Received new block", "hash", blockHash)
 
@@ -252,7 +309,7 @@ func (s *Server) processBlock(block *core.Block) error {
 	}
 
 	// broadcast the block to the network (all peers)
-	go s.broadcastBlock(block)
+	go s.broadcastBlock(from, block)
 
 	s.ServerOptions.Logger.Log("msg", "Added block to blockchain", "hash", blockHash, "blockchainHeight", s.chain.GetHeight())
 
@@ -263,15 +320,14 @@ func (s *Server) processBlock(block *core.Block) error {
 // two ways:
 // 1. through a wallet (client), HTTP API will receive the transaction, and send it to the server, server will add it to the mempool.
 // 2. through another node, the node will send the transaction to the server, server will add it to the mempool.
-func (s *Server) processTransaction(tx *core.Transaction) error {
+func (s *Server) processTransaction(from net.Addr, tx *core.Transaction) error {
 	transaction_hash := tx.GetHash(s.memPool.Pending.TransactionHasher)
 
-	//s.ServerOptions.Logger.Log("msg", "Received new transaction", "hash", transaction_hash)
+	s.ServerOptions.Logger.Log("msg", "Received new transaction", "hash", transaction_hash)
 
 	// check if transaction exists
 	if s.memPool.PendingHas(tx.GetHash(s.memPool.Pending.TransactionHasher)) {
-		s.ServerOptions.Logger.Log("msg", "Transaction already exists in the mempool", "hash", transaction_hash)
-		return nil
+		logrus.WithField("hash", transaction_hash).Warn("Transaction already exists in the mempool")
 	}
 
 	// verify the transaction signature
@@ -296,9 +352,9 @@ func (s *Server) processTransaction(tx *core.Transaction) error {
 	}
 
 	// broadcast the transaction to the network (all peers)
-	go s.broadcastTx(tx)
+	go s.broadcastTx(from, tx)
 
-	//s.ServerOptions.Logger.Log("msg", "Adding transaction to mempool", "hash", transaction_hash, "memPoolSize", s.memPool.PendingLen())
+	s.ServerOptions.Logger.Log("msg", "Adding transaction to mempool", "hash", transaction_hash, "memPoolSize", s.memPool.PendingLen())
 
 	// add transaction to mempool
 	return s.memPool.Add(tx)
@@ -313,40 +369,6 @@ func (s *Server) Stop() {
 func (s *Server) handleQuit() {
 	// shutdown the storage
 	s.chain.Storage.Shutdown()
-}
-
-// initTransports will initialize the transports.
-func (s *Server) initTransports() error {
-	if s.ServerOptions.Transports == nil {
-		return fmt.Errorf("no transports to initialize")
-	}
-
-	// log init of transports
-	s.ServerOptions.Logger.Log(
-		"msg", "Initializing transports",
-		"server_id", s.ServerOptions.ID,
-		"transports", len(s.ServerOptions.Transports),
-	)
-
-	// For each transport, spin up a new goroutine (user level thread).
-	for _, transport := range s.ServerOptions.Transports {
-		if transport == nil {
-			return fmt.Errorf("transport is nil")
-		}
-		// print concrete type of transport variable
-		go s.startTransport(transport)
-	}
-
-	return nil
-}
-
-// startTransport will start the transport.
-func (s *Server) startTransport(transport Transport) {
-	// Keep reading the channel and process the messages forever.
-	for message := range transport.Consume() {
-		// Send ReceiveRPC message to the server's rpcChannel. For synchronous processing.
-		s.rpcChannel <- message
-	}
 }
 
 // createNewBlock will create a new block.
@@ -398,7 +420,7 @@ func (s *Server) createNewBlock() error {
 	// as the leader node chosen by consensus for block addition
 	// we were able to create a new block successfully,
 	// broadcast it to all our peers, to ensure eventual consistency
-	go s.broadcastBlock(block)
+	go s.broadcastBlock(nil, block)
 
 	return nil
 }
