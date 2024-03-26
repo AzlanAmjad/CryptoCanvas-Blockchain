@@ -7,3 +7,8 @@ type StatusMessage struct {
 
 type GetStatusMessage struct {
 }
+
+type GetBlocksMessage struct {
+	From uint32
+	To   uint32
+}

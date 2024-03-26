@@ -30,6 +30,7 @@ const (
 	Block
 	Status
 	GetStatus
+	GetBlocks
 )
 
 // Message is a struct containing the message type and the payload.
@@ -93,7 +94,13 @@ func DefaultRPCDecoder(rpc ReceiveRPC) (*DecodedMessage, error) {
 			return nil, err
 		}
 		return &DecodedMessage{Header: msg.Header, From: rpc.From, Message: statusMessage}, nil
-
+	case GetBlocks:
+		blocksMessage := new(core.GetBlocksMessage)
+		err = gob.NewDecoder(bytes.NewReader(msg.Payload)).Decode(blocksMessage)
+		if err != nil {
+			return nil, err
+		}
+		return &DecodedMessage{Header: msg.Header, From: rpc.From, Message: blocksMessage}, nil
 	default:
 		return nil, fmt.Errorf("unknown message type: %d", msg.Header)
 	}

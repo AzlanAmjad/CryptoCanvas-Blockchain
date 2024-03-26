@@ -253,6 +253,12 @@ func (s *Server) ProcessMessage(from net.Addr, decodedMessage *DecodedMessage) e
 			return fmt.Errorf("failed to cast message to status")
 		}
 		return s.processStatus(from, &status)
+	case GetBlocks:
+		status, ok := decodedMessage.Message.(core.StatusMessage)
+		if !ok{
+			return fmt.Errorf("failed to cast message to getblocks")
+		}
+		return s.processGetBlocks(from,&status)
 	default:
 		return fmt.Errorf("unknown message type: %d", decodedMessage.Header)
 	}
@@ -429,9 +435,43 @@ func (s *Server) processGetStatus(from net.Addr, getStatus *core.GetStatusMessag
 }
 
 func (s *Server) processStatus(from net.Addr, status *core.StatusMessage) error {
-	s.ServerOptions.Logger.Log("msg", "Received new status message", status)
+	//s.ServerOptions.Logger.Log("msg", "Received new status message", status)
+	if status.CurrentHeight <=s.chain.GetHeight(){
+		s.ServerOptions.Logger.Log("msg","cannot sync", "thisHeight",s.chain.GetHeight(),status.CurrentHeight,"Address",from)
+		return nil
+	}
+
+
+	getBlocksMsg := &core.GetBlocksMessage{
+		From: s.chain.GetHeight(),
+		To: 0,
+
+	}
+
+	buffer := new(bytes.Buffer)
+	
+	if err := gob.NewEncoder(buffer).Encode(getBlocksMsg); err!= nil{
+		return err
+	}
+	msg := NewMessage(GetBlocks, buffer.Bytes())
+
+	for _, peer := range s.Peers {
+		if peer.conn.RemoteAddr() == from {
+			peer.Send(msg.Bytes())
+			return nil
+		}
+	}
+
+
+	return fmt.Errorf("couldn't find who sent the status message")
+}
+
+func (s *Server) processGetBlocks(from net.Addr, status *core.GetBlocksMessage) error{
+	s.ServerOptions.Logger.Log("msg", "Received new block message", status)
+
 	return nil
 }
+
 
 // Stop will stop the server.
 func (s *Server) Stop() {
