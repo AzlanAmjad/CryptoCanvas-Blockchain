@@ -254,11 +254,11 @@ func (s *Server) ProcessMessage(from net.Addr, decodedMessage *DecodedMessage) e
 		}
 		return s.processStatus(from, &status)
 	case GetBlocks:
-		status, ok := decodedMessage.Message.(core.StatusMessage)
+		blocks, ok := decodedMessage.Message.(core.GetBlocksMessage)
 		if !ok{
 			return fmt.Errorf("failed to cast message to getblocks")
 		}
-		return s.processGetBlocks(from,&status)
+		return s.processGetBlocks(from,&blocks)
 	default:
 		return fmt.Errorf("unknown message type: %d", decodedMessage.Header)
 	}
