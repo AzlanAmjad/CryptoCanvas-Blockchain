@@ -128,6 +128,20 @@ func (bc *Blockchain) AddBlock(block *Block) error {
 	return nil
 }
 
+// get multiple blocks in a specified range
+// start is inclusive
+// end is not inclusive
+func (bc *Blockchain) GetBlocks(start, end uint32) ([]*Block, error) {
+	// it is possible to get 0 as end when requesting all block from start
+	if start > end && end != 0 {
+		return nil, fmt.Errorf("start index is greater than end index")
+	}
+
+	bc.Lock.RLock() // lock because we are reading
+	defer bc.Lock.RUnlock()
+	return bc.Storage.GetBlocks(start, end, bc.BlockDecoder)
+}
+
 // HasBlock function compares the index of the block with the height of the blockchain.
 func (bc *Blockchain) HasBlock(block *Block) bool {
 	return block.Header.Index <= bc.GetHeight()

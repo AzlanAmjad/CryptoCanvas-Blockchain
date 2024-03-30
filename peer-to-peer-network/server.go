@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"reflect"
+	"sync"
 	"time"
 
 	core "github.com/AzlanAmjad/DreamscapeCanvas-Blockchain/blockchain-core"
@@ -36,8 +38,11 @@ type ServerOptions struct {
 }
 
 type Server struct {
-	TCPTransport  *TCPTransport
-	Peers         map[net.Addr]*TCPPeer
+	TCPTransport *TCPTransport
+
+	mu    sync.RWMutex
+	Peers map[net.Addr]*TCPPeer
+
 	ServerOptions ServerOptions
 	isValidator   bool
 	// holds transactions that are not yet included in a block.
@@ -172,10 +177,12 @@ func (s *Server) Start() error {
 			// start reading from the peer
 			go peer.readLoop(s.rpcChannel)
 
-			// Probably not the right place to do this, but we need peers to exist before sending getstatus
-			err := s.broadcastGetStatus()
+			// synchronize with the new peer, we do not broadcast here due to problems
+			// with the underlying algorithm, it will result in us having a corrupted blockchain
+			// if we begin to synchronize with multiple peers at the same time that have different state
+			err := s.sendGetStatus(peer)
 			if err != nil {
-				logrus.WithError(err).Error("Failed to broadcast getStatus")
+				logrus.WithError(err).Error("Failed to send getStatus to peer")
 			}
 		// receive RPC message to process
 		case rpc := <-s.rpcChannel:
@@ -223,6 +230,8 @@ func (s *Server) validatorLoop() {
 	}
 }
 
+// function to fulfill the RPCProcessor interface
+// this function will process the message received from the transport
 func (s *Server) ProcessMessage(from net.Addr, decodedMessage *DecodedMessage) error {
 	s.ServerOptions.Logger.Log("msg", "Processing message", "type", decodedMessage.Header, "from", decodedMessage.From)
 
@@ -233,18 +242,23 @@ func (s *Server) ProcessMessage(from net.Addr, decodedMessage *DecodedMessage) e
 			return fmt.Errorf("failed to cast message to transaction")
 		}
 		return s.processTransaction(from, &tx)
-	case Block:
+	case Block: // single block
 		block, ok := decodedMessage.Message.(core.Block)
 		if !ok {
 			return fmt.Errorf("failed to cast message to block")
 		}
 		return s.processBlock(from, &block)
+	case Blocks: // multiple blocks
+		blocks, ok := decodedMessage.Message.(core.BlocksMessage)
+		if !ok {
+			return fmt.Errorf("failed to cast message to blocks")
+		}
+		return s.processBlocks(from, &blocks)
 	case GetStatus:
-		s.ServerOptions.Logger.Log("msg", "Handling GetStatus", "msg", decodedMessage.Message)
 		getStatus, ok := decodedMessage.Message.(core.GetStatusMessage)
 		if !ok {
 			fmt.Printf("error: %s", getStatus)
-			return fmt.Errorf("failed to cast message to getstatus")
+			return fmt.Errorf("failed to cast message to get status")
 		}
 		return s.processGetStatus(from, &getStatus)
 	case Status:
@@ -255,17 +269,20 @@ func (s *Server) ProcessMessage(from net.Addr, decodedMessage *DecodedMessage) e
 		return s.processStatus(from, &status)
 	case GetBlocks:
 		blocks, ok := decodedMessage.Message.(core.GetBlocksMessage)
-		if !ok{
-			return fmt.Errorf("failed to cast message to getblocks")
+		if !ok {
+			return fmt.Errorf("failed to cast message to get blocks")
 		}
-		return s.processGetBlocks(from,&blocks)
+		return s.processGetBlocks(from, &blocks)
 	default:
 		return fmt.Errorf("unknown message type: %d", decodedMessage.Header)
 	}
 }
 
+// generic function to broadcast to all peers
 func (s *Server) broadcast(from net.Addr, payload []byte) error {
-	s.ServerOptions.Logger.Log("asd", "broadcasting to", len(s.Peers))
+	s.mu.RLock() // make sure the peers map is not being modified
+	defer s.mu.RUnlock()
+	s.ServerOptions.Logger.Log("msg", "broadcasting to peers", "number of peers", len(s.Peers))
 	for _, peer := range s.Peers {
 		// don't send the message back to the peer that sent it to us
 		// nil condition is checked because this data might not be from anyone
@@ -317,23 +334,21 @@ func (s *Server) broadcastBlock(from net.Addr, block *core.Block) {
 	}
 }
 
-func (s *Server) broadcastGetStatus() error {
+// initiate the process of possibly syncing with a peer
+// by asking for its status (Blockchain Height)
+func (s *Server) sendGetStatus(peer *TCPPeer) error {
+	// encode the get status message, and put it in a message, and broadcast it to the network.
 	getStatusBytes := bytes.Buffer{}
 	getStatusMessage := new(core.GetStatusMessage)
-
 	if err := gob.NewEncoder(&getStatusBytes).Encode(getStatusMessage); err != nil {
 		return err
 	}
-
 	msg := NewMessage(GetStatus, getStatusBytes.Bytes())
 
-	s.ServerOptions.Logger.Log("msg", "Broadcasting get status", "Message", getStatusBytes.Bytes())
+	s.ServerOptions.Logger.Log("msg", "sending get status")
 
-	err := s.broadcast(nil, msg.Bytes())
-	if err != nil {
-		logrus.WithError(err).Error("Failed to broadcast block")
-	}
-	return nil
+	// send the message to the peer
+	return peer.Send(msg.Bytes())
 }
 
 // handling blocks coming into the blockchain
@@ -358,8 +373,6 @@ func (s *Server) processBlock(from net.Addr, block *core.Block) error {
 	// broadcast the block to the network (all peers)
 	go s.broadcastBlock(from, block)
 
-	s.ServerOptions.Logger.Log("msg", "Added block to blockchain", "hash", blockHash, "blockchainHeight", s.chain.GetHeight())
-
 	return nil
 }
 
@@ -369,7 +382,6 @@ func (s *Server) processBlock(from net.Addr, block *core.Block) error {
 // 2. through another node, the node will send the transaction to the server, server will add it to the mempool.
 func (s *Server) processTransaction(from net.Addr, tx *core.Transaction) error {
 	transaction_hash := tx.GetHash(s.memPool.Pending.TransactionHasher)
-
 	s.ServerOptions.Logger.Log("msg", "Received new transaction", "hash", transaction_hash)
 
 	// check if transaction exists
@@ -407,71 +419,169 @@ func (s *Server) processTransaction(from net.Addr, tx *core.Transaction) error {
 	return s.memPool.Add(tx)
 }
 
+// process a get status message
+// this will happen when a new node joins or either some node wants to
+// know the status of the network
 func (s *Server) processGetStatus(from net.Addr, getStatus *core.GetStatusMessage) error {
-	s.ServerOptions.Logger.Log("msg", "Received new getstatus message", getStatus)
+	s.ServerOptions.Logger.Log(
+		"msg", "received get status message",
+		"from", from.String(),
+	)
 
+	// prepare a status message to send back to whoever requested our status
 	statusMessage := &core.StatusMessage{
-		CurrentHeight: s.chain.GetHeight(),
-		ID:            s.ServerOptions.ID,
+		BlockchainHeight: s.chain.GetHeight(),
+		ID:               s.ServerOptions.ID,
 	}
-
+	// encode the message using GOB
 	buf := new(bytes.Buffer)
-
 	if err := gob.NewEncoder(buf).Encode(statusMessage); err != nil {
 		return err
 	}
-
+	// wrap status message in a message
 	msg := NewMessage(Status, buf.Bytes())
 
 	// Get TCP Peer who sent the message, send status to that peer
-	for _, peer := range s.Peers {
-		if peer.conn.RemoteAddr() == from {
-			peer.Send(msg.Bytes())
-			return nil
-		}
+	s.mu.RLock() // we are about to read from peers map
+	defer s.mu.RUnlock()
+	// check if peer exists
+	if _, ok := s.Peers[from]; !ok {
+		return fmt.Errorf("peer who sent get status not found")
 	}
-
-	return fmt.Errorf("couldn't find who sent getStatus")
-}
-
-func (s *Server) processStatus(from net.Addr, status *core.StatusMessage) error {
-	//s.ServerOptions.Logger.Log("msg", "Received new status message", status)
-	if status.CurrentHeight <=s.chain.GetHeight(){
-		s.ServerOptions.Logger.Log("msg","cannot sync", "thisHeight",s.chain.GetHeight(),status.CurrentHeight,"Address",from)
-		return nil
-	}
-
-
-	getBlocksMsg := &core.GetBlocksMessage{
-		From: s.chain.GetHeight(),
-		To: 0,
-
-	}
-
-	buffer := new(bytes.Buffer)
-	
-	if err := gob.NewEncoder(buffer).Encode(getBlocksMsg); err!= nil{
-		return err
-	}
-	msg := NewMessage(GetBlocks, buffer.Bytes())
-
-	for _, peer := range s.Peers {
-		if peer.conn.RemoteAddr() == from {
-			peer.Send(msg.Bytes())
-			return nil
-		}
-	}
-
-
-	return fmt.Errorf("couldn't find who sent the status message")
-}
-
-func (s *Server) processGetBlocks(from net.Addr, status *core.GetBlocksMessage) error{
-	s.ServerOptions.Logger.Log("msg", "Received new block message", status)
+	s.Peers[from].Send(msg.Bytes())
 
 	return nil
 }
 
+// we will receive this message when we have requested the status of some or all peer nodes
+// this will function handles the status message received from the peer that we requested the status from
+func (s *Server) processStatus(from net.Addr, peerStatus *core.StatusMessage) error {
+	s.ServerOptions.Logger.Log("msg", "received status message", peerStatus)
+	// we check if the blockchain height of the peer is greater than ours
+	// if the peers blockchain height is less than or equal to ours, we are unable to sync
+	// because we as a node need to sync with someone who might be ahead of us in the blockchain
+	if peerStatus.BlockchainHeight <= s.chain.GetHeight() {
+		s.ServerOptions.Logger.Log("msg", "cannot sync", "our height", s.chain.GetHeight(), "peers height", peerStatus.BlockchainHeight, "peer address", from.String())
+		return nil
+	} else {
+		s.ServerOptions.Logger.Log("msg", "can sync", "our height", s.chain.GetHeight(), "peers height", peerStatus.BlockchainHeight, "peer address", from.String())
+	}
+
+	// if we can sync we need to request the blocks from this peer node
+	// create a get blocks message, encode it, and wrap it with a message
+	getBlocksMsg := &core.GetBlocksMessage{
+		FromIndex: s.chain.GetHeight() + 1, // from is inclusive, we already have the block at this height so we do + 1
+		ToIndex:   0,                       // 0 specifies that we want all blocks from the peer starting from "FromIndex"
+	}
+
+	s.ServerOptions.Logger.Log(
+		"msg", "requesting blocks from peer",
+		"peer address", from.String(),
+		"from index", getBlocksMsg.FromIndex,
+		"to index", getBlocksMsg.ToIndex,
+	)
+
+	buffer := new(bytes.Buffer)
+	if err := gob.NewEncoder(buffer).Encode(getBlocksMsg); err != nil {
+		return err
+	}
+	msg := NewMessage(GetBlocks, buffer.Bytes())
+
+	// send to the the peer that sent us the status message
+	s.mu.RLock() // we are about to read from peers map
+	defer s.mu.RUnlock()
+	// check if the peer exists
+	if _, ok := s.Peers[from]; !ok {
+		return fmt.Errorf("peer who sent status not found")
+	}
+	return s.Peers[from].Send(msg.Bytes())
+}
+
+// function to handle get blocks message, a node has requested blocks from us
+// this function gets the requested blocks and returns them to the requesting node
+// this requires a query into our blockchain LevelDB storage
+func (s *Server) processGetBlocks(from net.Addr, getBlocks *core.GetBlocksMessage) error {
+	s.ServerOptions.Logger.Log("msg", "received get blocks message")
+	s.ServerOptions.Logger.Log("msg", "peer requested blocks", "peer address", from.String())
+
+	// if getBlocks is 0 set it to the height of the blockchain + 1 since end is not inclusive
+	if getBlocks.ToIndex == 0 {
+		getBlocks.ToIndex = s.chain.GetHeight() + 1
+	}
+	// slice of blocks to retrieve
+	blocks, err := s.chain.GetBlocks(getBlocks.FromIndex, getBlocks.ToIndex)
+	if err != nil {
+		return err
+	}
+
+	// print acquired blocks
+	for _, block := range blocks {
+		s.ServerOptions.Logger.Log(
+			"msg", "sending block",
+			"data type", reflect.TypeOf(block),
+			"block index", block.Header.Index,
+			"block hash", block.GetHash(s.chain.BlockHeaderHasher),
+		)
+	}
+
+	// we now need to send the blocks to the requesting peer
+	blocksMessage := &core.BlocksMessage{}
+	// loop through the blocks and encode them and append them into the BlocksMessage{}
+	for _, block := range blocks {
+		blockBytes := bytes.Buffer{}
+		err := block.Encode(&blockBytes, s.chain.BlockEncoder)
+		if err != nil {
+			return err
+		}
+		blocksMessage.Blocks = append(blocksMessage.Blocks, blockBytes.Bytes())
+	}
+
+	// encode the blocks message
+	blocksMessageBytes := new(bytes.Buffer)
+	if err := gob.NewEncoder(blocksMessageBytes).Encode(blocksMessage); err != nil {
+		return err
+	}
+	// create a new message
+	msg := NewMessage(Blocks, blocksMessageBytes.Bytes())
+	fmt.Println("Sending blocks to peer", from.String())
+
+	// send the message to the peer
+	s.mu.RLock() // we are about to read from peers map
+	defer s.mu.RUnlock()
+	// check if the peer exists
+	if _, ok := s.Peers[from]; !ok {
+		return fmt.Errorf("peer who sent get blocks not found")
+	}
+	return s.Peers[from].Send(msg.Bytes())
+}
+
+// process blocks
+func (s *Server) processBlocks(from net.Addr, blocksMsg *core.BlocksMessage) error {
+	s.ServerOptions.Logger.Log(
+		"msg", "received blocks message",
+		"length", len(blocksMsg.Blocks), // encoded blocks
+	)
+	s.ServerOptions.Logger.Log("msg", "peer sent blocks", "peer address", from.String())
+
+	// loop the blocks and decode them, and add them to the blockchain
+	for _, blockBytes := range blocksMsg.Blocks {
+		block := core.NewBlock()
+		err := block.Decode(bytes.NewReader(blockBytes), s.chain.BlockDecoder)
+		if err != nil {
+			return err
+		}
+		blockHash := block.GetHash(s.chain.BlockHeaderHasher)
+		s.ServerOptions.Logger.Log("msg", "Received new block", "hash", blockHash)
+		// add the block to the blockchain, this includes validation
+		// of the block before addition
+		err = s.chain.AddBlock(block)
+		if err != nil {
+			return err // if addition of a block fails we will return, no need to continue
+		}
+	}
+
+	return nil
+}
 
 // Stop will stop the server.
 func (s *Server) Stop() {

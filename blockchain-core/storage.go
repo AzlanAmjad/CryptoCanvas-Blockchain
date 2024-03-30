@@ -11,6 +11,7 @@ import (
 type Storage interface {
 	Put(block *Block, enc Encoder[*Block]) error
 	Get(index uint32, dec Decoder[*Block]) (*Block, error)
+	GetBlocks(start, end uint32, dec Decoder[*Block]) ([]*Block, error)
 	Shutdown()
 }
 
@@ -48,7 +49,6 @@ func (s *LevelDBStorage) Put(block *Block, enc Encoder[*Block]) error {
 
 // Get returns a block from the database.
 func (s *LevelDBStorage) Get(index uint32, dec Decoder[*Block]) (*Block, error) {
-	// NOTE: TO BE IMPLEMENTED, MUST HAVE BLOCK DECODING IMPLEMENTED FIRST
 	key := make([]byte, 4)
 	binary.LittleEndian.PutUint32(key, index)
 	value, err := s.DB.Get(key, nil)
@@ -61,6 +61,20 @@ func (s *LevelDBStorage) Get(index uint32, dec Decoder[*Block]) (*Block, error) 
 		return nil, err
 	}
 	return block, nil
+}
+
+// GetBlocks returns all blocks from start to end
+// end is not inclusive
+func (s *LevelDBStorage) GetBlocks(start, end uint32, dec Decoder[*Block]) ([]*Block, error) {
+	var blocks []*Block
+	for i := start; i < end; i++ {
+		block, err := s.Get(i, dec)
+		if err != nil {
+			return nil, err
+		}
+		blocks = append(blocks, block)
+	}
+	return blocks, nil
 }
 
 // Shutdown closes the database.

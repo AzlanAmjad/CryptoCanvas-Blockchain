@@ -36,7 +36,7 @@ func (tp *TCPPeer) Send(payload []byte) error {
 
 func (tp *TCPPeer) readLoop(rpcChannel chan ReceiveRPC) {
 	for {
-		buf := make([]byte, 2048)
+		buf := make([]byte, 8192)
 		n, err := tp.conn.Read(buf)
 		if err != nil {
 			fmt.Println("Error with connection:", tp.conn.RemoteAddr())

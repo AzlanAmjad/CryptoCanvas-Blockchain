@@ -28,6 +28,7 @@ type MessageType byte
 const (
 	Transaction MessageType = iota
 	Block
+	Blocks
 	Status
 	GetStatus
 	GetBlocks
@@ -56,7 +57,7 @@ func (m *Message) Bytes() []byte {
 type DecodedMessage struct {
 	Header  MessageType
 	From    net.Addr
-	Message any
+	Message any // NOTE: do not make this field a pointer!
 }
 
 type RPCDecodeFunc func(ReceiveRPC) (*DecodedMessage, error)
@@ -78,25 +79,32 @@ func DefaultRPCDecoder(rpc ReceiveRPC) (*DecodedMessage, error) {
 			return nil, err
 		}
 		return &DecodedMessage{Header: msg.Header, From: rpc.From, Message: tx}, nil
-	case Block:
+	case Block: // single block
 		block := core.NewBlock()
 		err = block.Decode(bytes.NewReader(msg.Payload), core.NewBlockDecoder())
 		if err != nil {
 			return nil, err
 		}
 		return &DecodedMessage{Header: msg.Header, From: rpc.From, Message: *block}, nil
+	case Blocks: // multiple blocks
+		blocksMessage := core.BlocksMessage{}
+		err = gob.NewDecoder(bytes.NewReader(msg.Payload)).Decode(&blocksMessage)
+		if err != nil {
+			return nil, err
+		}
+		return &DecodedMessage{Header: msg.Header, From: rpc.From, Message: blocksMessage}, nil
 	case GetStatus:
-		return &DecodedMessage{Header: msg.Header, From: rpc.From, Message: nil}, nil
+		return &DecodedMessage{Header: msg.Header, From: rpc.From, Message: core.GetStatusMessage{}}, nil
 	case Status:
-		statusMessage := new(core.GetStatusMessage)
-		err = gob.NewDecoder(bytes.NewReader(msg.Payload)).Decode(statusMessage)
+		statusMessage := core.StatusMessage{}
+		err = gob.NewDecoder(bytes.NewReader(msg.Payload)).Decode(&statusMessage)
 		if err != nil {
 			return nil, err
 		}
 		return &DecodedMessage{Header: msg.Header, From: rpc.From, Message: statusMessage}, nil
 	case GetBlocks:
-		blocksMessage := new(core.GetBlocksMessage)
-		err = gob.NewDecoder(bytes.NewReader(msg.Payload)).Decode(blocksMessage)
+		blocksMessage := core.GetBlocksMessage{}
+		err = gob.NewDecoder(bytes.NewReader(msg.Payload)).Decode(&blocksMessage)
 		if err != nil {
 			return nil, err
 		}
