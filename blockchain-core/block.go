@@ -40,6 +40,7 @@ type Block struct {
 	Signature    *crypto.Signature
 
 	// everything below should not be encoded
+	// created on NewBlock()
 
 	// cached block header hash
 	hash types.Hash

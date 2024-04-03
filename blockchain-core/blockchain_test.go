@@ -39,7 +39,7 @@ func TestHasBlock(t *testing.T) {
 	block := getRandomBlock(t, 1, getPrevBlockHash(t, bc, 1))
 
 	// add the block to the blockchain
-	err = bc.AddBlock(block)
+	_, err = bc.AddBlock(block)
 	assert.Nil(t, err)
 
 	// check if the block exists
@@ -67,14 +67,14 @@ func TestAddBlock(t *testing.T) {
 		block := getRandomBlock(t, uint32(i), getPrevBlockHash(t, bc, uint32(i)))
 
 		// add the block to the blockchain
-		err = bc.AddBlock(block)
+		_, err = bc.AddBlock(block)
 		assert.Nil(t, err)
 		assert.Equal(t, uint32(i), bc.GetHeight())
 	}
 
 	// add the same block again
 	block := getRandomBlock(t, 9, getPrevBlockHash(t, bc, 9))
-	err = bc.AddBlock(block)
+	_, err = bc.AddBlock(block)
 	assert.NotNil(t, err)
 }
 
@@ -95,8 +95,10 @@ func TestAddBlockToHigh(t *testing.T) {
 	valid_block := getRandomBlock(t, 1, getPrevBlockHash(t, bc, 1))
 
 	// add the block to the blockchain
-	assert.NotNil(t, bc.AddBlock(block))
-	assert.Nil(t, bc.AddBlock(valid_block))
+	_, invalid_block_err := bc.AddBlock(block)
+	_, valid_block_err := bc.AddBlock(valid_block)
+	assert.NotNil(t, invalid_block_err)
+	assert.Nil(t, valid_block_err)
 }
 
 func TestGetHeaderByIndex(t *testing.T) {
@@ -116,7 +118,7 @@ func TestGetHeaderByIndex(t *testing.T) {
 		block := getRandomBlock(t, uint32(i), getPrevBlockHash(t, bc, uint32(i)))
 
 		// add the block to the blockchain
-		err = bc.AddBlock(block)
+		_, err = bc.AddBlock(block)
 		assert.Nil(t, err)
 
 		// get the block header by index

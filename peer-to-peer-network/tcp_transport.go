@@ -10,6 +10,9 @@ import (
 	"github.com/go-kit/log"
 )
 
+// tcp buffer size const for reading from the connection
+const TCP_BUFFER_SIZE = 8192
+
 // TCPTransport is a transport that communicates with peers over TCP.
 type TCPTransport struct {
 	Addr        net.Addr
@@ -36,7 +39,7 @@ func (tp *TCPPeer) Send(payload []byte) error {
 
 func (tp *TCPPeer) readLoop(rpcChannel chan ReceiveRPC) {
 	for {
-		buf := make([]byte, 8192)
+		buf := make([]byte, TCP_BUFFER_SIZE)
 		n, err := tp.conn.Read(buf)
 		if err != nil {
 			fmt.Println("Error with connection:", tp.conn.RemoteAddr())

@@ -23,6 +23,8 @@ import (
 
 var defaultBlockTime = 5 * time.Second
 
+const BLOCKS_TOO_HIGH_THRESHOLD = 5
+
 // One node can have multiple transports, for example, a TCP transport and a UDP transport.
 type ServerOptions struct {
 	SeedNodes     []net.Addr
@@ -51,6 +53,9 @@ type Server struct {
 	peerChannel chan *TCPPeer
 	quitChannel chan bool
 	chain       *core.Blockchain
+	// count of blocks that are sent to us that are too high for our chain
+	// used for syncing the blockchain with the peer in processBlock
+	blocks_too_high_count int
 }
 
 // NewServer creates a new server with the given options.
@@ -93,12 +98,13 @@ func NewServer(options ServerOptions) (*Server, error) {
 		ServerOptions: options,
 		// Validators will have private keys, so they can sign blocks.
 		// Note: only one validator can be elected, one source of truth, one miner in the whole network.
-		isValidator: options.PrivateKey != nil,
-		memPool:     NewTxPool(options.MaxMemPoolSize),
-		rpcChannel:  make(chan ReceiveRPC),
-		peerChannel: peerCh,
-		quitChannel: make(chan bool),
-		chain:       bc,
+		isValidator:           options.PrivateKey != nil,
+		memPool:               NewTxPool(options.MaxMemPoolSize),
+		rpcChannel:            make(chan ReceiveRPC),
+		peerChannel:           peerCh,
+		quitChannel:           make(chan bool),
+		chain:                 bc,
+		blocks_too_high_count: 0,
 	}
 
 	// Set the default RPC decoder.
@@ -361,8 +367,26 @@ func (s *Server) processBlock(from net.Addr, block *core.Block) error {
 
 	// add the block to the blockchain, this includes validation
 	// of the block before addition
-	err := s.chain.AddBlock(block)
+	error_code, err := s.chain.AddBlock(block)
+
+	// if the block height is too high for our blockchain
+	// indicated by error code 5, we need to sync with the peer
+	// we also check if we have had BLOCKS_TOO_HIGH_THRESHOLD invalid block additions that have had
+	// the same error code, this is to prevent spamming the peer with getStatus messages
+
+	if error_code == 5 && s.blocks_too_high_count == BLOCKS_TOO_HIGH_THRESHOLD {
+		// send a get status message to start the syncing process, with the peer
+		err_sendGetStatus := s.sendGetStatus(s.Peers[from])
+		if err_sendGetStatus != nil {
+			logrus.WithError(err).Error("Failed to send getStatus to peer, failed to start syncing process")
+		}
+		s.blocks_too_high_count = 0
+	}
+
 	if err != nil {
+		if error_code == 5 {
+			s.blocks_too_high_count++
+		}
 		// we return here so we don't broadcast to our peers
 		// this is because if we have already added the block
 		// which is possibly why we are in this error condition, then we
@@ -422,7 +446,8 @@ func (s *Server) processTransaction(from net.Addr, tx *core.Transaction) error {
 // process a get status message
 // this will happen when a new node joins or either some node wants to
 // know the status of the network
-func (s *Server) processGetStatus(from net.Addr, getStatus *core.GetStatusMessage) error {
+// some node has asked for our status
+func (s *Server) processGetStatus(from net.Addr, _ *core.GetStatusMessage) error {
 	s.ServerOptions.Logger.Log(
 		"msg", "received get status message",
 		"from", from.String(),
@@ -440,6 +465,12 @@ func (s *Server) processGetStatus(from net.Addr, getStatus *core.GetStatusMessag
 	}
 	// wrap status message in a message
 	msg := NewMessage(Status, buf.Bytes())
+
+	s.ServerOptions.Logger.Log(
+		"msg", "sending status message",
+		"blockchain_height", statusMessage.BlockchainHeight,
+		"peer_address", from.String(),
+	)
 
 	// Get TCP Peer who sent the message, send status to that peer
 	s.mu.RLock() // we are about to read from peers map
@@ -514,48 +545,73 @@ func (s *Server) processGetBlocks(from net.Addr, getBlocks *core.GetBlocksMessag
 		return err
 	}
 
-	// print acquired blocks
-	for _, block := range blocks {
-		s.ServerOptions.Logger.Log(
-			"msg", "sending block",
-			"data type", reflect.TypeOf(block),
-			"block index", block.Header.Index,
-			"block hash", block.GetHash(s.chain.BlockHeaderHasher),
-		)
-	}
+	// create a list of block messages to send, note each can not be greater
+	// than TCP_BUFFER_SIZE
+	blocksMessages := make([]core.BlocksMessage, 0)
 
-	// we now need to send the blocks to the requesting peer
-	blocksMessage := &core.BlocksMessage{}
-	// loop through the blocks and encode them and append them into the BlocksMessage{}
+	blocksMessage := &core.BlocksMessage{} // initial blocks message to start loop
+	// size of the blocks message to start loop, blocks message + the new message that will be constructed
+	blocksMessageSize := int(reflect.TypeOf(*blocksMessage).Size()) + int(reflect.TypeOf(Message{}).Size())
+
+	// loop through the blocks, encode them, and append them to the blocks message
+	// we start a new blocksMessage if we reach the TCP_BUFFER_SIZE
 	for _, block := range blocks {
 		blockBytes := bytes.Buffer{}
 		err := block.Encode(&blockBytes, s.chain.BlockEncoder)
 		if err != nil {
 			return err
 		}
+
+		// check if the block can fit in the blocks message
+		// if it can not fit, appends blocksMessage and reset
+		if blocksMessageSize+len(blockBytes.Bytes()) >= TCP_BUFFER_SIZE {
+			blocksMessages = append(blocksMessages, *blocksMessage)
+			blocksMessage = &core.BlocksMessage{}
+			blocksMessageSize = int(reflect.TypeOf(*blocksMessage).Size()) + int(reflect.TypeOf(Message{}).Size())
+		}
+
+		// append the block to the blocks message
 		blocksMessage.Blocks = append(blocksMessage.Blocks, blockBytes.Bytes())
+		blocksMessageSize += len(blockBytes.Bytes())
+	} // for after last loop iteration
+	blocksMessages = append(blocksMessages, *blocksMessage)
+
+	// log length of blocks messages
+	s.ServerOptions.Logger.Log("msg", "BLOCKS MESSAGES LENGTH", "length", len(blocksMessages))
+
+	// for each new blocksMessage we created
+	for _, blocksMessage := range blocksMessages {
+		// encode the blocks message
+		blocksMessageBytes := new(bytes.Buffer)
+		if err := gob.NewEncoder(blocksMessageBytes).Encode(blocksMessage); err != nil {
+			return err
+		}
+		// create a new message
+		msg := NewMessage(Blocks, blocksMessageBytes.Bytes())
+		s.ServerOptions.Logger.Log(
+			"msg", "sending blocks message to peer",
+			"peer address", from.String(),
+			// message length can not be more than TCP buffer size TCP_BUFFER_SIZE
+			"message length", len(msg.Bytes()), // used to check byte length of encoded message
+		)
+
+		// send the message to the peer
+		s.mu.RLock() // we are about to read from peers map
+		defer s.mu.RUnlock()
+		// check if the peer exists
+		if _, ok := s.Peers[from]; !ok {
+			return fmt.Errorf("peer who sent get blocks not found")
+		}
+		err := s.Peers[from].Send(msg.Bytes())
+		if err != nil {
+			return err
+		}
 	}
 
-	// encode the blocks message
-	blocksMessageBytes := new(bytes.Buffer)
-	if err := gob.NewEncoder(blocksMessageBytes).Encode(blocksMessage); err != nil {
-		return err
-	}
-	// create a new message
-	msg := NewMessage(Blocks, blocksMessageBytes.Bytes())
-	fmt.Println("Sending blocks to peer", from.String())
-
-	// send the message to the peer
-	s.mu.RLock() // we are about to read from peers map
-	defer s.mu.RUnlock()
-	// check if the peer exists
-	if _, ok := s.Peers[from]; !ok {
-		return fmt.Errorf("peer who sent get blocks not found")
-	}
-	return s.Peers[from].Send(msg.Bytes())
+	return nil
 }
 
-// process blocks
+// process blocks, function to process multiple blocks
 func (s *Server) processBlocks(from net.Addr, blocksMsg *core.BlocksMessage) error {
 	s.ServerOptions.Logger.Log(
 		"msg", "received blocks message",
@@ -574,7 +630,7 @@ func (s *Server) processBlocks(from net.Addr, blocksMsg *core.BlocksMessage) err
 		s.ServerOptions.Logger.Log("msg", "Received new block", "hash", blockHash)
 		// add the block to the blockchain, this includes validation
 		// of the block before addition
-		err = s.chain.AddBlock(block)
+		_, err = s.chain.AddBlock(block)
 		if err != nil {
 			return err // if addition of a block fails we will return, no need to continue
 		}
@@ -629,7 +685,7 @@ func (s *Server) createNewBlock() error {
 	}
 
 	// add the block to the blockchain
-	err = s.chain.AddBlock(block)
+	_, err = s.chain.AddBlock(block)
 	if err != nil {
 		// something ent wrong, we need to re-add the transactions to the mempool
 		// so that they can be included in the next block.

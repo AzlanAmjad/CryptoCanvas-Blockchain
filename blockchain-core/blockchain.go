@@ -10,11 +10,14 @@ import (
 )
 
 type Blockchain struct {
-	ID           string
+	ID string
+	// should never be used outside a blockchain function
+	// (i.e, should never be used as Blockchain.Lock outside a blockchain function)
 	Lock         sync.RWMutex
 	BlockHeaders []*BlockHeader
 	Storage      Storage
-	Validator    Validator
+
+	Validator Validator
 	// block encoder and decoder
 	BlockEncoder Encoder[*Block]
 	BlockDecoder Decoder[*Block]
@@ -95,22 +98,23 @@ func (bc *Blockchain) GetHeight() uint32 {
 }
 
 // AddBlock adds a block to the blockchain.
-func (bc *Blockchain) AddBlock(block *Block) error {
+// int return value is only for validate block error code, every other error will have a 0 error code
+func (bc *Blockchain) AddBlock(block *Block) (int, error) {
 	if bc.Validator == nil {
-		return fmt.Errorf("no validator to validate the block")
+		return 0, fmt.Errorf("no validator to validate the block")
 	}
 
 	// validate the block before adding it to the blockchain
-	err := bc.Validator.ValidateBlock(block)
+	error_code, err := bc.Validator.ValidateBlock(block)
 	if err != nil {
-		return err
+		return error_code, err
 	}
 
 	bc.Lock.Lock()
 	// add the block to the storage
 	err = bc.Storage.Put(block, bc.BlockEncoder)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	// add the block to the blockchain headers
 	bc.BlockHeaders = append(bc.BlockHeaders, block.Header)
@@ -123,18 +127,20 @@ func (bc *Blockchain) AddBlock(block *Block) error {
 		"data_hash", block.Header.DataHash,
 		"transactions", len(block.Transactions),
 		"blockchain_height", bc.GetHeight(),
+		"block validator", string(block.Validator.ToBytes()),
+		"block signature R", string(block.Signature.R.Bytes()),
+		"block signature S", string(block.Signature.S.Bytes()),
 	)
 
-	return nil
+	return 0, nil
 }
 
 // get multiple blocks in a specified range
 // start is inclusive
 // end is not inclusive
 func (bc *Blockchain) GetBlocks(start, end uint32) ([]*Block, error) {
-	// it is possible to get 0 as end when requesting all block from start
-	if start > end && end != 0 {
-		return nil, fmt.Errorf("start index is greater than end index")
+	if start >= end {
+		return nil, fmt.Errorf("start index is greater than or equal to end index")
 	}
 
 	bc.Lock.RLock() // lock because we are reading
