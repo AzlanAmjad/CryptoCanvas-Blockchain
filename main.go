@@ -85,19 +85,6 @@ func makeServer(id string, privateKey *crypto.PrivateKey, addr net.Addr) *networ
 	return server
 }
 
-func tcp_tester() {
-	conn, err := net.Dial("tcp", "localhost:8080")
-	if err != nil {
-		logrus.WithError(err).Fatal("Failed to dial")
-	}
-
-	tx := makeTransactionMessage()
-	_, err = conn.Write(tx)
-	if err != nil {
-		panic(err)
-	}
-}
-
 func makeTransactionMessage() []byte {
 	// Generate a random byte slice
 	randomBytes := make([]byte, 32)

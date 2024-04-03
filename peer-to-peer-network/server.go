@@ -52,7 +52,7 @@ type Server struct {
 	rpcChannel  chan ReceiveRPC
 	peerChannel chan *TCPPeer
 	quitChannel chan bool
-	chain       *core.Blockchain
+	Chain       *core.Blockchain
 	// count of blocks that are sent to us that are too high for our chain
 	// used for syncing the blockchain with the peer in processBlock
 	blocks_too_high_count int
@@ -103,7 +103,7 @@ func NewServer(options ServerOptions) (*Server, error) {
 		rpcChannel:            make(chan ReceiveRPC),
 		peerChannel:           peerCh,
 		quitChannel:           make(chan bool),
-		chain:                 bc,
+		Chain:                 bc,
 		blocks_too_high_count: 0,
 	}
 
@@ -324,11 +324,11 @@ func (s *Server) broadcastTx(from net.Addr, tx *core.Transaction) {
 
 // broadcast the block to all known peers, eventually consistency model
 func (s *Server) broadcastBlock(from net.Addr, block *core.Block) {
-	s.ServerOptions.Logger.Log("msg", "Broadcasting block", "hash", block.GetHash(s.chain.BlockHeaderHasher))
+	s.ServerOptions.Logger.Log("msg", "Broadcasting block", "hash", block.GetHash(s.Chain.BlockHeaderHasher))
 
 	// encode the block, and put it in a message, and broadcast it to the network.
 	blockBytes := bytes.Buffer{}
-	err := block.Encode(&blockBytes, s.chain.BlockEncoder)
+	err := block.Encode(&blockBytes, s.Chain.BlockEncoder)
 	if err != nil {
 		logrus.WithError(err).Error("Failed to encode block")
 		return
@@ -362,12 +362,12 @@ func (s *Server) sendGetStatus(peer *TCPPeer) error {
 // 1. through another block that is forwarding the block to known peers
 // 2. the leader node chosen through consensus has created a new block, and is broadcasting it to us
 func (s *Server) processBlock(from net.Addr, block *core.Block) error {
-	blockHash := block.GetHash(s.chain.BlockHeaderHasher)
+	blockHash := block.GetHash(s.Chain.BlockHeaderHasher)
 	s.ServerOptions.Logger.Log("msg", "Received new block", "hash", blockHash)
 
 	// add the block to the blockchain, this includes validation
 	// of the block before addition
-	error_code, err := s.chain.AddBlock(block)
+	error_code, err := s.Chain.AddBlock(block)
 
 	// if the block height is too high for our blockchain
 	// indicated by error code 5, we need to sync with the peer
@@ -455,7 +455,7 @@ func (s *Server) processGetStatus(from net.Addr, _ *core.GetStatusMessage) error
 
 	// prepare a status message to send back to whoever requested our status
 	statusMessage := &core.StatusMessage{
-		BlockchainHeight: s.chain.GetHeight(),
+		BlockchainHeight: s.Chain.GetHeight(),
 		ID:               s.ServerOptions.ID,
 	}
 	// encode the message using GOB
@@ -491,17 +491,17 @@ func (s *Server) processStatus(from net.Addr, peerStatus *core.StatusMessage) er
 	// we check if the blockchain height of the peer is greater than ours
 	// if the peers blockchain height is less than or equal to ours, we are unable to sync
 	// because we as a node need to sync with someone who might be ahead of us in the blockchain
-	if peerStatus.BlockchainHeight <= s.chain.GetHeight() {
-		s.ServerOptions.Logger.Log("msg", "cannot sync", "our height", s.chain.GetHeight(), "peers height", peerStatus.BlockchainHeight, "peer address", from.String())
+	if peerStatus.BlockchainHeight <= s.Chain.GetHeight() {
+		s.ServerOptions.Logger.Log("msg", "cannot sync", "our height", s.Chain.GetHeight(), "peers height", peerStatus.BlockchainHeight, "peer address", from.String())
 		return nil
 	} else {
-		s.ServerOptions.Logger.Log("msg", "can sync", "our height", s.chain.GetHeight(), "peers height", peerStatus.BlockchainHeight, "peer address", from.String())
+		s.ServerOptions.Logger.Log("msg", "can sync", "our height", s.Chain.GetHeight(), "peers height", peerStatus.BlockchainHeight, "peer address", from.String())
 	}
 
 	// if we can sync we need to request the blocks from this peer node
 	// create a get blocks message, encode it, and wrap it with a message
 	getBlocksMsg := &core.GetBlocksMessage{
-		FromIndex: s.chain.GetHeight() + 1, // from is inclusive, we already have the block at this height so we do + 1
+		FromIndex: s.Chain.GetHeight() + 1, // from is inclusive, we already have the block at this height so we do + 1
 		ToIndex:   0,                       // 0 specifies that we want all blocks from the peer starting from "FromIndex"
 	}
 
@@ -537,10 +537,10 @@ func (s *Server) processGetBlocks(from net.Addr, getBlocks *core.GetBlocksMessag
 
 	// if getBlocks is 0 set it to the height of the blockchain + 1 since end is not inclusive
 	if getBlocks.ToIndex == 0 {
-		getBlocks.ToIndex = s.chain.GetHeight() + 1
+		getBlocks.ToIndex = s.Chain.GetHeight() + 1
 	}
 	// slice of blocks to retrieve
-	blocks, err := s.chain.GetBlocks(getBlocks.FromIndex, getBlocks.ToIndex)
+	blocks, err := s.Chain.GetBlocks(getBlocks.FromIndex, getBlocks.ToIndex)
 	if err != nil {
 		return err
 	}
@@ -557,7 +557,7 @@ func (s *Server) processGetBlocks(from net.Addr, getBlocks *core.GetBlocksMessag
 	// we start a new blocksMessage if we reach the TCP_BUFFER_SIZE
 	for _, block := range blocks {
 		blockBytes := bytes.Buffer{}
-		err := block.Encode(&blockBytes, s.chain.BlockEncoder)
+		err := block.Encode(&blockBytes, s.Chain.BlockEncoder)
 		if err != nil {
 			return err
 		}
@@ -595,6 +595,10 @@ func (s *Server) processGetBlocks(from net.Addr, getBlocks *core.GetBlocksMessag
 			"message length", len(msg.Bytes()), // used to check byte length of encoded message
 		)
 
+		// wait a bit before sending the message
+		// this is to prevent the peer from being overwhelmed and its TCP buffer filling up too fast
+		time.Sleep(100 * time.Millisecond)
+
 		// send the message to the peer
 		s.mu.RLock() // we are about to read from peers map
 		defer s.mu.RUnlock()
@@ -622,15 +626,15 @@ func (s *Server) processBlocks(from net.Addr, blocksMsg *core.BlocksMessage) err
 	// loop the blocks and decode them, and add them to the blockchain
 	for _, blockBytes := range blocksMsg.Blocks {
 		block := core.NewBlock()
-		err := block.Decode(bytes.NewReader(blockBytes), s.chain.BlockDecoder)
+		err := block.Decode(bytes.NewReader(blockBytes), s.Chain.BlockDecoder)
 		if err != nil {
 			return err
 		}
-		blockHash := block.GetHash(s.chain.BlockHeaderHasher)
+		blockHash := block.GetHash(s.Chain.BlockHeaderHasher)
 		s.ServerOptions.Logger.Log("msg", "Received new block", "hash", blockHash)
 		// add the block to the blockchain, this includes validation
 		// of the block before addition
-		_, err = s.chain.AddBlock(block)
+		_, err = s.Chain.AddBlock(block)
 		if err != nil {
 			return err // if addition of a block fails we will return, no need to continue
 		}
@@ -647,13 +651,13 @@ func (s *Server) Stop() {
 // handleQuit will handle the quit signal sent by Stop()
 func (s *Server) handleQuit() {
 	// shutdown the storage
-	s.chain.Storage.Shutdown()
+	s.Chain.Storage.Shutdown()
 }
 
 // createNewBlock will create a new block.
 func (s *Server) createNewBlock() error {
 	// get the previous block hash
-	prevBlockHash, err := s.chain.GetBlockHash(s.chain.GetHeight())
+	prevBlockHash, err := s.Chain.GetBlockHash(s.Chain.GetHeight())
 	if err != nil {
 		return err
 	}
@@ -675,7 +679,7 @@ func (s *Server) createNewBlock() error {
 	// link block to previous block
 	block.Header.PrevBlockHash = prevBlockHash
 	// update the block index
-	block.Header.Index = s.chain.GetHeight() + 1
+	block.Header.Index = s.Chain.GetHeight() + 1
 	// TODO (Azlan): update other block parameters so that this block is not marked as invalid.
 
 	// sign the block as a validator of this block
@@ -685,7 +689,7 @@ func (s *Server) createNewBlock() error {
 	}
 
 	// add the block to the blockchain
-	_, err = s.chain.AddBlock(block)
+	_, err = s.Chain.AddBlock(block)
 	if err != nil {
 		// something ent wrong, we need to re-add the transactions to the mempool
 		// so that they can be included in the next block.
