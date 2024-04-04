@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"fmt"
 	"net"
+	"time"
 
 	core "github.com/AzlanAmjad/DreamscapeCanvas-Blockchain/blockchain-core"
 	crypto "github.com/AzlanAmjad/DreamscapeCanvas-Blockchain/cryptography"
@@ -36,6 +37,19 @@ func main() {
 		logrus.WithError(err).Fatal("Failed to resolve TCP address")
 	}
 
+	// ask user what port to listen on for the API
+	var APIport string
+	logrus.Info("Enter the port to listen on for the API: ")
+	_, err = fmt.Scanln(&APIport)
+	if err != nil {
+		logrus.WithError(err).Fatal("Failed to read port")
+	}
+	// create net.Addr for a TCP connection
+	APIaddr, err := net.ResolveTCPAddr("tcp", "localhost:"+APIport)
+	if err != nil {
+		logrus.WithError(err).Fatal("Failed to resolve TCP address")
+	}
+
 	// ask user if this node is a validator
 	var isValidator string
 	logrus.Info("Is this node a validator? (y/n): ")
@@ -49,19 +63,22 @@ func main() {
 		// generate private key
 		privateKey := crypto.GeneratePrivateKey()
 		// create local node
-		localNode = makeServer(id, &privateKey, addr)
+		localNode = makeServer(id, &privateKey, addr, APIaddr)
 	} else {
 		// create local node
-		localNode = makeServer(id, nil, addr)
+		localNode = makeServer(id, nil, addr, APIaddr)
 	}
 
 	// start local node
 	go localNode.Start()
 
+	// start TCP tester
+	go tcpTesterTransactionSender()
+
 	select {}
 }
 
-func makeServer(id string, privateKey *crypto.PrivateKey, addr net.Addr) *network.Server {
+func makeServer(id string, privateKey *crypto.PrivateKey, addr net.Addr, APIaddr net.Addr) *network.Server {
 	// one seed node, hardcoded at port 8000
 	seedAddr, err := net.ResolveTCPAddr("tcp", "localhost:8000")
 	if err != nil {
@@ -70,6 +87,7 @@ func makeServer(id string, privateKey *crypto.PrivateKey, addr net.Addr) *networ
 
 	serverOptions := network.ServerOptions{
 		Addr:      addr,
+		APIAddr:   APIaddr,
 		ID:        id,
 		SeedNodes: []net.Addr{seedAddr},
 	}
@@ -83,6 +101,24 @@ func makeServer(id string, privateKey *crypto.PrivateKey, addr net.Addr) *networ
 		panic(err)
 	}
 	return server
+}
+
+func tcpTesterTransactionSender() {
+	// create a new TCP connection
+	conn, err := net.Dial("tcp", "localhost:8000")
+	if err != nil {
+		logrus.WithError(err).Fatal("Failed to connect to address")
+	}
+
+	// send the transactions
+	for {
+		msg := makeTransactionMessage()
+		_, err = conn.Write(msg)
+		if err != nil {
+			logrus.WithError(err).Fatal("Failed to write to connection")
+		}
+		time.Sleep(2 * time.Second)
+	}
 }
 
 func makeTransactionMessage() []byte {

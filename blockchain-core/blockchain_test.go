@@ -16,7 +16,7 @@ func TestNewBlockchain(t *testing.T) {
 	defer storage.Shutdown()
 
 	// create new blockchain with the LevelDB storage
-	bc, err := NewBlockchain(storage, getRandomBlock(t, 0, types.Hash{}), "TestBlockchain")
+	bc, err := NewBlockchain(storage, getRandomBlock(t, 0, types.Hash{}), "TestBlockchain", nil)
 	assert.NotNil(t, bc.Storage)
 	assert.NotNil(t, bc.Validator)
 	assert.Nil(t, err)
@@ -32,7 +32,7 @@ func TestHasBlock(t *testing.T) {
 	defer storage.Shutdown()
 
 	// create new blockchain with the LevelDB storage
-	bc, err := NewBlockchain(storage, getRandomBlock(t, 0, types.Hash{}), "TestBlockchain")
+	bc, err := NewBlockchain(storage, getRandomBlock(t, 0, types.Hash{}), "TestBlockchain", nil)
 	assert.Nil(t, err)
 
 	// create a new block
@@ -59,7 +59,7 @@ func TestAddBlock(t *testing.T) {
 	defer storage.Shutdown()
 
 	// create new blockchain with the LevelDB storage
-	bc, err := NewBlockchain(storage, getRandomBlock(t, 0, types.Hash{}), "TestBlockchain")
+	bc, err := NewBlockchain(storage, getRandomBlock(t, 0, types.Hash{}), "TestBlockchain", nil)
 	assert.Nil(t, err)
 
 	for i := 1; i < 10; i++ {
@@ -87,7 +87,7 @@ func TestAddBlockToHigh(t *testing.T) {
 	defer storage.Shutdown()
 
 	// create new blockchain with the LevelDB storage
-	bc, err := NewBlockchain(storage, getRandomBlock(t, 0, types.Hash{}), "TestBlockchain")
+	bc, err := NewBlockchain(storage, getRandomBlock(t, 0, types.Hash{}), "TestBlockchain", nil)
 	assert.Nil(t, err)
 
 	// create a new block, with a high index
@@ -110,7 +110,7 @@ func TestGetHeaderByIndex(t *testing.T) {
 	defer storage.Shutdown()
 
 	// create new blockchain with the LevelDB storage
-	bc, err := NewBlockchain(storage, getRandomBlock(t, 0, types.Hash{}), "TestBlockchain")
+	bc, err := NewBlockchain(storage, getRandomBlock(t, 0, types.Hash{}), "TestBlockchain", nil)
 	assert.Nil(t, err)
 
 	for i := 1; i < 10; i++ {

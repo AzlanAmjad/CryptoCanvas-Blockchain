@@ -5,6 +5,7 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/hex"
 	"math/big"
 
 	types "github.com/AzlanAmjad/DreamscapeCanvas-Blockchain/data-types"
@@ -53,6 +54,14 @@ func (k *PrivateKey) Sign(data []byte) (*Signature, error) {
 func (k *PublicKey) ToBytes() []byte {
 	publicKeyBytes := elliptic.MarshalCompressed(k.Key.Curve, k.Key.X, k.Key.Y)
 	return publicKeyBytes
+}
+
+// String returns the public key as a string.
+func (k *PublicKey) String() string {
+	k_bytes := k.ToBytes()
+
+	// return string of bytes, not shown as ascii
+	return hex.EncodeToString(k_bytes)
 }
 
 // GetAddress returns the address of the public key.

@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/AzlanAmjad/DreamscapeCanvas-Blockchain/api"
 	core "github.com/AzlanAmjad/DreamscapeCanvas-Blockchain/blockchain-core"
 	crypto "github.com/AzlanAmjad/DreamscapeCanvas-Blockchain/cryptography"
 	"github.com/go-kit/log"
@@ -29,6 +30,7 @@ const BLOCKS_TOO_HIGH_THRESHOLD = 5
 type ServerOptions struct {
 	SeedNodes     []net.Addr
 	Addr          net.Addr
+	APIAddr       net.Addr
 	ID            string
 	Logger        log.Logger
 	RPCDecodeFunc RPCDecodeFunc
@@ -48,7 +50,7 @@ type Server struct {
 	ServerOptions ServerOptions
 	isValidator   bool
 	// holds transactions that are not yet included in a block.
-	memPool     *TxPool
+	memPool     *core.TxPool
 	rpcChannel  chan ReceiveRPC
 	peerChannel chan *TCPPeer
 	quitChannel chan bool
@@ -72,6 +74,9 @@ func NewServer(options ServerOptions) (*Server, error) {
 		options.MaxMemPoolSize = 100
 	}
 
+	// create server mempool
+	memPool := core.NewTxPool(options.MaxMemPoolSize)
+
 	// create the default LevelDB storage
 	dbPath := fmt.Sprintf("./leveldb/%s/blockchain", options.ID)
 	storage, err := core.NewLevelDBStorage(dbPath)
@@ -79,7 +84,7 @@ func NewServer(options ServerOptions) (*Server, error) {
 		return nil, err
 	}
 	// create new blockchain with the LevelDB storage
-	bc, err := core.NewBlockchain(storage, genesisBlock(), options.ID)
+	bc, err := core.NewBlockchain(storage, genesisBlock(), options.ID, memPool)
 	if err != nil {
 		return nil, err
 	}
@@ -99,7 +104,7 @@ func NewServer(options ServerOptions) (*Server, error) {
 		// Validators will have private keys, so they can sign blocks.
 		// Note: only one validator can be elected, one source of truth, one miner in the whole network.
 		isValidator:           options.PrivateKey != nil,
-		memPool:               NewTxPool(options.MaxMemPoolSize),
+		memPool:               memPool,
 		rpcChannel:            make(chan ReceiveRPC),
 		peerChannel:           peerCh,
 		quitChannel:           make(chan bool),
@@ -117,6 +122,13 @@ func NewServer(options ServerOptions) (*Server, error) {
 		s.ServerOptions.RPCProcessor = s
 	}
 
+	// boot up API server
+	if s.ServerOptions.APIAddr != nil {
+		go s.startAPIServer()
+		// log API server start
+		s.ServerOptions.Logger.Log("msg", "API server started", "address", s.ServerOptions.APIAddr.String())
+	}
+
 	// Goroutine (Thread) to process creation of blocks if the node is a validator.
 	if s.isValidator {
 		go s.validatorLoop()
@@ -130,6 +142,24 @@ func NewServer(options ServerOptions) (*Server, error) {
 	)
 
 	return s, nil
+}
+
+// startAPIServer will start the API server.
+func (s *Server) startAPIServer() {
+	// API server config
+	apiServerConfig := &api.ServerConfig{
+		ListenAddr: s.ServerOptions.APIAddr,
+		Logger:     s.ServerOptions.Logger,
+	}
+
+	// create a new API server
+	apiServer := api.NewServer(apiServerConfig, s.Chain)
+
+	// start the API server
+	err := apiServer.Start()
+	if err != nil {
+		logrus.WithError(err).Fatal("Failed to start API server")
+	}
 }
 
 // dial the seed nodes, and add them to the list of peers
@@ -711,8 +741,10 @@ func (s *Server) createNewBlock() error {
 // genesisBlock creates the first block in the blockchain.
 func genesisBlock() *core.Block {
 	b := core.NewBlock()
-	b.Header.Timestamp = 0000000000 // setting to zero for all genesis blocks created across all nodes
-	b.Header.Index = 0
 	b.Header.Version = 1
+	b.Header.PrevBlockHash = [32]byte{} // initialize with an empty byte array
+	b.Header.DataHash = [32]byte{}      // initialize with an empty byte array
+	b.Header.Timestamp = 0000000000     // setting to zero for all genesis blocks created across all nodes
+	b.Header.Index = 0
 	return b
 }

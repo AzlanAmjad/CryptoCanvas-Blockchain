@@ -13,9 +13,10 @@ type Blockchain struct {
 	ID string
 	// should never be used outside a blockchain function
 	// (i.e, should never be used as Blockchain.Lock outside a blockchain function)
-	Lock         sync.RWMutex
-	BlockHeaders []*BlockHeader
-	Storage      Storage
+	Lock                sync.RWMutex
+	BlockHeaders        []*BlockHeader
+	BlockHeadersHashMap map[types.Hash]*BlockHeader
+	Storage             Storage
 
 	Validator Validator
 	// block encoder and decoder
@@ -24,14 +25,18 @@ type Blockchain struct {
 	// block header hasher
 	BlockHeaderHasher Hasher[*BlockHeader]
 	Logger            log.Logger
+	// mempool for transactions
+	memPool *TxPool
 }
 
 // NewBlockchain creates a new empty blockchain. With the default block validator.
-func NewBlockchain(storage Storage, genesis *Block, ID string) (*Blockchain, error) {
+func NewBlockchain(storage Storage, genesis *Block, ID string, mempool *TxPool) (*Blockchain, error) {
 	bc := &Blockchain{
-		BlockHeaders: make([]*BlockHeader, 0),
-		Storage:      storage,
-		ID:           ID,
+		BlockHeaders:        make([]*BlockHeader, 0),
+		BlockHeadersHashMap: make(map[types.Hash]*BlockHeader),
+		Storage:             storage,
+		ID:                  ID,
+		memPool:             mempool,
 	}
 
 	// add default block encoder and decoder
@@ -71,6 +76,7 @@ func (bc *Blockchain) addBlockWithoutValidation(block *Block) error {
 	}
 	// add the block to the blockchain headers.
 	bc.BlockHeaders = append(bc.BlockHeaders, block.Header)
+	bc.BlockHeadersHashMap[hash] = block.Header
 	bc.Lock.Unlock()
 
 	bc.Logger.Log(
@@ -118,6 +124,7 @@ func (bc *Blockchain) AddBlock(block *Block) (int, error) {
 	}
 	// add the block to the blockchain headers
 	bc.BlockHeaders = append(bc.BlockHeaders, block.Header)
+	bc.BlockHeadersHashMap[block.GetHash(bc.BlockHeaderHasher)] = block.Header
 	bc.Lock.Unlock()
 
 	bc.Logger.Log(
@@ -133,6 +140,28 @@ func (bc *Blockchain) AddBlock(block *Block) (int, error) {
 	)
 
 	return 0, nil
+}
+
+// get block by index
+func (bc *Blockchain) GetBlockByIndex(index uint32) (*Block, error) {
+	if index > bc.GetHeight() {
+		return nil, fmt.Errorf("block index is invalid, block index: %d, blockchain height: %d", index, bc.GetHeight())
+	}
+
+	bc.Lock.RLock()
+	defer bc.Lock.RUnlock()
+	return bc.Storage.Get(index, bc.BlockDecoder)
+}
+
+// get block by hash
+func (bc *Blockchain) GetBlockByHash(hash types.Hash) (*Block, error) {
+	bc.Lock.RLock()
+	defer bc.Lock.RUnlock()
+	header, ok := bc.BlockHeadersHashMap[hash]
+	if !ok {
+		return nil, fmt.Errorf("block hash is not found in the blockchain")
+	}
+	return bc.Storage.Get(header.Index, bc.BlockDecoder)
 }
 
 // get multiple blocks in a specified range
@@ -171,4 +200,16 @@ func (bc *Blockchain) GetBlockHash(index uint32) (types.Hash, error) {
 		return types.Hash{}, err
 	}
 	return bc.BlockHeaderHasher.Hash(header), nil
+}
+
+// get transaction by hash using the transaction mempool
+func (bc *Blockchain) GetTransactionByHash(hash types.Hash) (*Transaction, error) {
+	if bc.memPool == nil {
+		return nil, fmt.Errorf("blockchain mempool is nil")
+	}
+	tx, err := bc.memPool.GetTransactionByHash(hash)
+	if err != nil {
+		return nil, fmt.Errorf("transaction not found in mempool")
+	}
+	return tx, nil
 }
