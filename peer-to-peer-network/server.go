@@ -10,7 +10,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/AzlanAmjad/DreamscapeCanvas-Blockchain/api"
 	core "github.com/AzlanAmjad/DreamscapeCanvas-Blockchain/blockchain-core"
 	crypto "github.com/AzlanAmjad/DreamscapeCanvas-Blockchain/cryptography"
 	"github.com/go-kit/log"
@@ -147,13 +146,14 @@ func NewServer(options ServerOptions) (*Server, error) {
 // startAPIServer will start the API server.
 func (s *Server) startAPIServer() {
 	// API server config
-	apiServerConfig := &api.ServerConfig{
-		ListenAddr: s.ServerOptions.APIAddr,
-		Logger:     s.ServerOptions.Logger,
+	apiServerConfig := &APIServerConfig{
+		ListenAddr:  s.ServerOptions.APIAddr,
+		Logger:      s.ServerOptions.Logger,
+		NodeRPCChan: s.rpcChannel,
 	}
 
 	// create a new API server
-	apiServer := api.NewServer(apiServerConfig, s.Chain)
+	apiServer := NewAPIServer(apiServerConfig, s.Chain)
 
 	// start the API server
 	err := apiServer.Start()
@@ -441,6 +441,7 @@ func (s *Server) processTransaction(from net.Addr, tx *core.Transaction) error {
 	// check if transaction exists
 	if s.memPool.PendingHas(tx.GetHash(s.memPool.Pending.TransactionHasher)) {
 		logrus.WithField("hash", transaction_hash).Warn("Transaction already exists in the mempool")
+		return nil
 	}
 
 	// verify the transaction signature

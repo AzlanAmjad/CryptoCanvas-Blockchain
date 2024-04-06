@@ -9,7 +9,8 @@ import (
 )
 
 type Transaction struct {
-	Data []byte
+	Data  []byte
+	Nonce uint64
 
 	From      crypto.PublicKey
 	Signature *crypto.Signature

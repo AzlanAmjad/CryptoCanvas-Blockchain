@@ -183,7 +183,15 @@ func NewTransactionEncoder() *TransactionEncoder {
 
 func (e *TransactionEncoder) Encode(w io.Writer, t *Transaction) error {
 	enc := gob.NewEncoder(w)
+
+	// Encode the data
 	err := enc.Encode(t.Data)
+	if err != nil {
+		return err
+	}
+
+	// Encode the Nonce
+	err = enc.Encode(t.Nonce)
 	if err != nil {
 		return err
 	}
@@ -225,7 +233,15 @@ func NewTransactionDecoder() *TransactionDecoder {
 
 func (d *TransactionDecoder) Decode(r io.Reader, t *Transaction) error {
 	dec := gob.NewDecoder(r)
+
+	// Decode the data
 	err := dec.Decode(&t.Data)
+	if err != nil {
+		return err
+	}
+
+	// Decode the Nonce
+	err = dec.Decode(&t.Nonce)
 	if err != nil {
 		return err
 	}

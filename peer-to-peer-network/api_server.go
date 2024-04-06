@@ -1,8 +1,10 @@
-package api
+package network
 
 import (
+	"bytes"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"strconv"
@@ -19,34 +21,35 @@ import (
 // We use the Echo web framework to build our API here
 
 // server configuration struct
-type ServerConfig struct {
+type APIServerConfig struct {
 	// ListenAddr is the address the server listens on
-	ListenAddr net.Addr
-	Logger     log.Logger
+	ListenAddr  net.Addr
+	Logger      log.Logger
+	NodeRPCChan chan ReceiveRPC
 }
 
 // Server is the API Server for the blockchain
-type Server struct {
-	config *ServerConfig
+type APIServer struct {
+	config *APIServerConfig
 	bc     *core.Blockchain
 }
 
 // transaction to send as JSON
-type Transaction struct {
+type JSONTransaction struct {
 	Data      string
 	From      string
 	Signature *crypto.Signature
 	FirstSeen time.Time
 }
 
-// transactions response
-type Transactions struct {
+// transactions response to send as part of Block JSON
+type JSONTransactions struct {
 	TxLength uint
 	TxHashes []string
 }
 
 // block type to send as JSON
-type Block struct {
+type JSONBlock struct {
 	Version       uint32
 	PrevBlockHash string
 	DataHash      string
@@ -54,19 +57,19 @@ type Block struct {
 	Index         uint32
 	Validator     string
 	Signature     *crypto.Signature
-	Transactions  Transactions
+	Transactions  JSONTransactions
 }
 
 // NewServer creates a new Server
-func NewServer(config *ServerConfig, bc *core.Blockchain) *Server {
-	return &Server{
+func NewAPIServer(config *APIServerConfig, bc *core.Blockchain) *APIServer {
+	return &APIServer{
 		config: config,
 		bc:     bc,
 	}
 }
 
 // Start starts the server
-func (s *Server) Start() error {
+func (s *APIServer) Start() error {
 
 	// create a new Echo instance
 	e := echo.New()
@@ -75,6 +78,7 @@ func (s *Server) Start() error {
 	e.GET("/block/index/:index", s.getBlockByIndex)
 	e.GET("/block/hash/:hash", s.getBlockByHash)
 	e.GET("/transaction/hash/:hash", s.getTransactionByHash)
+	e.POST("/transaction", s.postTransaction)
 
 	// start the server
 	err := e.Start(s.config.ListenAddr.String())
@@ -85,7 +89,33 @@ func (s *Server) Start() error {
 	return nil
 }
 
-func (s *Server) getTransactionByHash(c echo.Context) error {
+// postTransaction expects to receive an encoded transaction
+func (s *APIServer) postTransaction(c echo.Context) error {
+	// get net.Addr from http request
+	addr := c.Request().RemoteAddr
+	// create net.Addr
+	remoteAddr, err := net.ResolveTCPAddr("tcp", addr)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{"error": "invalid client address"})
+	}
+	// read the request body into a buffer
+	body, err := io.ReadAll(c.Request().Body)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{"error": "invalid request body"})
+	}
+
+	fmt.Println("REST API: Received message from", remoteAddr)
+
+	// create ReceiveRPC struct
+	rpc := ReceiveRPC{From: remoteAddr, Payload: bytes.NewReader(body)}
+	// send over the channel to the server
+	s.config.NodeRPCChan <- rpc
+
+	// send a response
+	return c.JSON(http.StatusOK, map[string]any{"message": "transaction received"})
+}
+
+func (s *APIServer) getTransactionByHash(c echo.Context) error {
 	// get the hash from the URL
 	hash := c.Param("hash")
 
@@ -108,7 +138,7 @@ func (s *Server) getTransactionByHash(c echo.Context) error {
 }
 
 // getBlockByIndex is the handler for the /block/index/:index route
-func (s *Server) getBlockByIndex(c echo.Context) error {
+func (s *APIServer) getBlockByIndex(c echo.Context) error {
 	// get the index from the URL
 	index := c.Param("index")
 
@@ -128,7 +158,7 @@ func (s *Server) getBlockByIndex(c echo.Context) error {
 }
 
 // getBlockByHash is the handler for the /block/hash/:hash route
-func (s *Server) getBlockByHash(c echo.Context) error {
+func (s *APIServer) getBlockByHash(c echo.Context) error {
 	// get the hash from the URL
 	hash := c.Param("hash")
 	fmt.Print(hash)
@@ -150,9 +180,9 @@ func (s *Server) getBlockByHash(c echo.Context) error {
 	return c.JSON(http.StatusOK, blockJSON)
 }
 
-func (s *Server) CreateJSONBlock(block *core.Block) *Block {
+func (s *APIServer) CreateJSONBlock(block *core.Block) *JSONBlock {
 	// create a new Block struct to send as JSON
-	blockJSON := &Block{
+	blockJSON := &JSONBlock{
 		Version:       block.Header.Version,
 		PrevBlockHash: block.Header.PrevBlockHash.String(),
 		DataHash:      block.Header.DataHash.String(),
@@ -178,9 +208,9 @@ func (s *Server) CreateJSONBlock(block *core.Block) *Block {
 	return blockJSON
 }
 
-func (s *Server) CreateJSONTransaction(tx *core.Transaction) *Transaction {
+func (s *APIServer) CreateJSONTransaction(tx *core.Transaction) *JSONTransaction {
 	// create a new Transaction struct to send as JSON
-	txJSON := &Transaction{
+	txJSON := &JSONTransaction{
 		Data:      hex.EncodeToString(tx.Data),
 		From:      tx.From.String(),
 		Signature: tx.Signature,

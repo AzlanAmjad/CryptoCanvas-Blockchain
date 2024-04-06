@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"fmt"
 	"net"
+	"net/http"
 	"time"
 
 	core "github.com/AzlanAmjad/DreamscapeCanvas-Blockchain/blockchain-core"
@@ -104,20 +105,18 @@ func makeServer(id string, privateKey *crypto.PrivateKey, addr net.Addr, APIaddr
 }
 
 func tcpTesterTransactionSender() {
-	// create a new TCP connection
-	conn, err := net.Dial("tcp", "localhost:8000")
-	if err != nil {
-		logrus.WithError(err).Fatal("Failed to connect to address")
-	}
+	// create a new http client to send transaction to nodes REST API
+	client := http.DefaultClient
 
-	// send the transactions
+	// send the transaction to the API
 	for {
 		msg := makeTransactionMessage()
-		_, err = conn.Write(msg)
+		_, err := client.Post("http://localhost:8080/transaction", "application/octet-stream", bytes.NewReader(msg))
 		if err != nil {
-			logrus.WithError(err).Fatal("Failed to write to connection")
+			logrus.WithError(err).Fatal("Failed to send transaction to API")
 		}
-		time.Sleep(2 * time.Second)
+		// wait for a bit
+		time.Sleep(500 * time.Millisecond)
 	}
 }
 
