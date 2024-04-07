@@ -2,6 +2,7 @@ package core
 
 import (
 	"crypto/sha256"
+	"encoding/binary"
 
 	types "github.com/AzlanAmjad/DreamscapeCanvas-Blockchain/data-types"
 )
@@ -30,6 +31,13 @@ func NewTransactionHasher() *TransactionHasher {
 }
 
 func (h *TransactionHasher) Hash(tx *Transaction) types.Hash {
-	transactionHash := sha256.Sum256(tx.Data)
+	// convert Nonce to byte array
+	buf := make([]byte, 8)
+	binary.LittleEndian.PutUint64(buf, tx.Nonce)
+
+	// buffer of tx.Data and tx.Nonce
+	buf = append(tx.Data, buf...)
+
+	transactionHash := sha256.Sum256(buf)
 	return types.Hash(transactionHash[:])
 }

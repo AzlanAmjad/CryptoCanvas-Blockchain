@@ -403,7 +403,6 @@ func (s *Server) processBlock(from net.Addr, block *core.Block) error {
 	// indicated by error code 5, we need to sync with the peer
 	// we also check if we have had BLOCKS_TOO_HIGH_THRESHOLD invalid block additions that have had
 	// the same error code, this is to prevent spamming the peer with getStatus messages
-
 	if error_code == 5 && s.blocks_too_high_count == BLOCKS_TOO_HIGH_THRESHOLD {
 		// send a get status message to start the syncing process, with the peer
 		err_sendGetStatus := s.sendGetStatus(s.Peers[from])

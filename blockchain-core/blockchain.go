@@ -1,6 +1,7 @@
 package core
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"sync"
@@ -18,6 +19,10 @@ type Blockchain struct {
 	BlockHeadersHashMap map[types.Hash]*BlockHeader
 	Storage             Storage
 
+	// temporary blockchain state, later should be persisted on disk
+	CollectionState map[types.Hash]*CollectionTransaction
+	MintState       map[types.Hash]*MintTransaction
+
 	Validator Validator
 	// block encoder and decoder
 	BlockEncoder Encoder[*Block]
@@ -34,6 +39,8 @@ func NewBlockchain(storage Storage, genesis *Block, ID string, mempool *TxPool) 
 	bc := &Blockchain{
 		BlockHeaders:        make([]*BlockHeader, 0),
 		BlockHeadersHashMap: make(map[types.Hash]*BlockHeader),
+		CollectionState:     make(map[types.Hash]*CollectionTransaction),
+		MintState:           make(map[types.Hash]*MintTransaction),
 		Storage:             storage,
 		ID:                  ID,
 		memPool:             mempool,
@@ -65,24 +72,24 @@ func NewBlockchain(storage Storage, genesis *Block, ID string, mempool *TxPool) 
 
 // addBlockWithoutValidation adds a block to the blockchain without validation.
 func (bc *Blockchain) addBlockWithoutValidation(block *Block) error {
-	index := block.Header.Index
-	hash := block.GetHash(bc.BlockHeaderHasher)
-
 	bc.Lock.Lock()
 	// add the block to the storage
 	err := bc.Storage.Put(block, bc.BlockEncoder)
 	if err != nil {
-		panic(err)
+		return err
 	}
-	// add the block to the blockchain headers.
+	// add the block to the blockchain headers
 	bc.BlockHeaders = append(bc.BlockHeaders, block.Header)
-	bc.BlockHeadersHashMap[hash] = block.Header
+	bc.BlockHeadersHashMap[block.GetHash(bc.BlockHeaderHasher)] = block.Header
 	bc.Lock.Unlock()
 
 	bc.Logger.Log(
-		"msg", "genesis block added to the blockchain",
-		"block_index", index,
-		"block_hash", hash,
+		"msg", "Block added to the blockchain",
+		"block_index", block.Header.Index,
+		"block_hash", block.GetHash(bc.BlockHeaderHasher),
+		"data_hash", block.Header.DataHash,
+		"transactions", len(block.Transactions),
+		"blockchain_height", bc.GetHeight(),
 	)
 
 	return err
@@ -116,28 +123,66 @@ func (bc *Blockchain) AddBlock(block *Block) (int, error) {
 		return error_code, err
 	}
 
-	bc.Lock.Lock()
-	// add the block to the storage
-	err = bc.Storage.Put(block, bc.BlockEncoder)
+	// process the transactions in the block
+	// processing transactions helps us update the state of the node, which
+	// aims to be consistent with the state of the blockchain network
+	for _, tx := range block.Transactions {
+		switch tx.Type {
+		case TxCommon:
+			fmt.Println("Common transaction")
+		case TxCollection:
+			// decode the transaction
+			collection_tx := &CollectionTransaction{}
+			err := collection_tx.Decode(bytes.NewReader(tx.Data), NewCollectionTransactionDecoder())
+			if err != nil {
+				bc.Logger.Log("msg", "Error decoding collection transaction", "error", err.Error())
+				continue
+			}
+
+			// add the collection transaction to the blockchain state
+			bc.CollectionState[tx.GetHash(block.TransactionHasher)] = collection_tx
+			bc.Logger.Log("msg", "Collection transaction processed", "collection_name", collection_tx.Name)
+		case TxMint:
+			// decode the transaction
+			mint_tx := &MintTransaction{}
+			err := mint_tx.Decode(bytes.NewReader(tx.Data), NewMintTransactionDecoder())
+			if err != nil {
+				bc.Logger.Log("msg", "Error decoding mint transaction", "error", err.Error())
+				continue
+			}
+
+			// check if the mint transaction is valid
+			_, ok := bc.CollectionState[mint_tx.Collection]
+			if !ok {
+				bc.Logger.Log("msg", "Collection not found", "collection_hash", mint_tx.Collection)
+				continue
+			}
+
+			// verify the signature on the transaction
+			valid, err := mint_tx.VerifySignature()
+			if err != nil {
+				bc.Logger.Log("msg", "Error verifying mint transaction signature", "error", err.Error())
+				continue
+			}
+			if !valid {
+				bc.Logger.Log("msg", "Invalid mint transaction signature")
+				continue
+			}
+
+			// add the mint transaction to the blockchain state
+			bc.MintState[tx.GetHash(block.TransactionHasher)] = mint_tx
+
+			bc.Logger.Log("msg", "Mint transaction processed", "collection_hash", mint_tx.Collection, "nft_hash", mint_tx.NFT)
+		default:
+			fmt.Println("Unknown transaction type")
+		}
+	}
+
+	// add the block to the blockchain
+	err = bc.addBlockWithoutValidation(block)
 	if err != nil {
 		return 0, err
 	}
-	// add the block to the blockchain headers
-	bc.BlockHeaders = append(bc.BlockHeaders, block.Header)
-	bc.BlockHeadersHashMap[block.GetHash(bc.BlockHeaderHasher)] = block.Header
-	bc.Lock.Unlock()
-
-	bc.Logger.Log(
-		"msg", "Block added to the blockchain",
-		"block_index", block.Header.Index,
-		"block_hash", block.GetHash(bc.BlockHeaderHasher),
-		"data_hash", block.Header.DataHash,
-		"transactions", len(block.Transactions),
-		"blockchain_height", bc.GetHeight(),
-		"block validator", string(block.Validator.ToBytes()),
-		"block signature R", string(block.Signature.R.Bytes()),
-		"block signature S", string(block.Signature.S.Bytes()),
-	)
 
 	return 0, nil
 }

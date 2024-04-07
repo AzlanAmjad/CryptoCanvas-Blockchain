@@ -6,10 +6,80 @@ import (
 
 	crypto "github.com/AzlanAmjad/DreamscapeCanvas-Blockchain/cryptography"
 	types "github.com/AzlanAmjad/DreamscapeCanvas-Blockchain/data-types"
+	"golang.org/x/exp/rand"
 )
 
+// native NFT implementation
+
+type TransactionType byte
+
+const (
+	TxCollection TransactionType = iota
+	TxMint
+	TxCommon // placeholder for future transaction types, so we can handle arbitrary transaction types.
+)
+
+type CollectionTransaction struct {
+	Fee      uint64
+	Name     string
+	Metadata []byte
+}
+
+// Encode encodes a collection transaction to a writer, in a modular fashion.
+func (t *CollectionTransaction) Encode(w io.Writer, enc Encoder[*CollectionTransaction]) error {
+	return enc.Encode(w, t)
+}
+
+// Decode decodes a collection transaction from a reader, in a modular fashion.
+func (t *CollectionTransaction) Decode(r io.Reader, dec Decoder[*CollectionTransaction]) error {
+	return dec.Decode(r, t)
+}
+
+type MintTransaction struct {
+	Fee               uint64
+	NFT               types.Hash // Non-fungible token, the hash of the NFT, can be any real world tangible or digital asset.
+	Collection        types.Hash // The hash of the collection to which the NFT belongs.
+	CollectionCreator crypto.PublicKey
+	Signature         *crypto.Signature
+	Metadata          []byte
+}
+
+// Function to sign the mint transaction.
+func (t *MintTransaction) Sign(privateKey *crypto.PrivateKey) error {
+	signature, err := privateKey.Sign(t.NFT[:])
+	if err != nil {
+		return err
+	}
+
+	t.Signature = signature
+	t.CollectionCreator = privateKey.GetPublicKey()
+
+	return nil
+}
+
+// Function to verify the signature of the mint transaction.
+func (t *MintTransaction) VerifySignature() (bool, error) {
+	if t.Signature == nil {
+		return false, fmt.Errorf("no signature to verify")
+	}
+
+	return t.CollectionCreator.Verify(t.NFT[:], t.Signature), nil
+}
+
+// Encode encodes a mint transaction to a writer, in a modular fashion.
+func (t *MintTransaction) Encode(w io.Writer, enc Encoder[*MintTransaction]) error {
+	return enc.Encode(w, t)
+}
+
+// Decode decodes a mint transaction from a reader, in a modular fashion.
+func (t *MintTransaction) Decode(r io.Reader, dec Decoder[*MintTransaction]) error {
+	return dec.Decode(r, t)
+}
+
+// Transaction struct to hold types of transactions.
 type Transaction struct {
-	Data  []byte
+	Type  TransactionType
+	Data  []byte // holds the encoded transaction data.
 	Nonce uint64
 
 	From      crypto.PublicKey
@@ -30,8 +100,12 @@ type Transaction struct {
 
 // NewTransaction creates a new transaction.
 func NewTransaction(data []byte) *Transaction {
+	random_int := rand.Intn(10000000000000)
+
 	return &Transaction{
-		Data: data,
+		Type:  TxCommon,
+		Data:  data,
+		Nonce: uint64(random_int),
 	}
 }
 

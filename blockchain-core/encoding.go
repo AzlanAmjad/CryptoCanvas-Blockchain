@@ -184,8 +184,14 @@ func NewTransactionEncoder() *TransactionEncoder {
 func (e *TransactionEncoder) Encode(w io.Writer, t *Transaction) error {
 	enc := gob.NewEncoder(w)
 
+	// Encode the transaction type
+	err := enc.Encode(t.Type)
+	if err != nil {
+		return err
+	}
+
 	// Encode the data
-	err := enc.Encode(t.Data)
+	err = enc.Encode(t.Data)
 	if err != nil {
 		return err
 	}
@@ -234,8 +240,14 @@ func NewTransactionDecoder() *TransactionDecoder {
 func (d *TransactionDecoder) Decode(r io.Reader, t *Transaction) error {
 	dec := gob.NewDecoder(r)
 
+	// Decode the transaction type
+	err := dec.Decode(&t.Type)
+	if err != nil {
+		return err
+	}
+
 	// Decode the data
-	err := dec.Decode(&t.Data)
+	err = dec.Decode(&t.Data)
 	if err != nil {
 		return err
 	}
@@ -276,6 +288,192 @@ func (d *TransactionDecoder) Decode(r io.Reader, t *Transaction) error {
 
 	// Decode the first seen timestamp
 	err = dec.Decode(&t.FirstSeen)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// TODO: Implement the encoder and decoder for the following transactions
+
+// Default collection transaction encoder and decoder
+type CollectionTransactionEncoder struct{}
+
+func NewCollectionTransactionEncoder() *CollectionTransactionEncoder {
+	return &CollectionTransactionEncoder{}
+}
+
+func (e *CollectionTransactionEncoder) Encode(w io.Writer, t *CollectionTransaction) error {
+	enc := gob.NewEncoder(w)
+
+	// encode the fee
+	err := enc.Encode(t.Fee)
+	if err != nil {
+		return err
+	}
+
+	// encode the name
+	err = enc.Encode(t.Name)
+	if err != nil {
+		return err
+	}
+
+	// encode the metadata
+	err = enc.Encode(t.Metadata)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+type CollectionTransactionDecoder struct{}
+
+func NewCollectionTransactionDecoder() *CollectionTransactionDecoder {
+	return &CollectionTransactionDecoder{}
+}
+
+func (d *CollectionTransactionDecoder) Decode(r io.Reader, t *CollectionTransaction) error {
+	dec := gob.NewDecoder(r)
+
+	// decode the fee
+	err := dec.Decode(&t.Fee)
+	if err != nil {
+		return err
+	}
+
+	// decode the name
+	err = dec.Decode(&t.Name)
+	if err != nil {
+		return err
+	}
+
+	// decode the metadata
+	err = dec.Decode(&t.Metadata)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// Default mint transaction encoder and decoder
+type MintTransactionEncoder struct{}
+
+func NewMintTransactionEncoder() *MintTransactionEncoder {
+	return &MintTransactionEncoder{}
+}
+
+func (e *MintTransactionEncoder) Encode(w io.Writer, t *MintTransaction) error {
+	enc := gob.NewEncoder(w)
+
+	// encode the fee
+	err := enc.Encode(t.Fee)
+	if err != nil {
+		return err
+	}
+
+	// encode the NFT
+	err = enc.Encode(t.NFT)
+	if err != nil {
+		return err
+	}
+
+	// encode the collection
+	err = enc.Encode(t.Collection)
+	if err != nil {
+		return err
+	}
+
+	// encode the collection creator / public key
+	// Encode the public key
+	// Marshal the public key to ASN.1 DER format
+	derBytes, err := x509.MarshalPKIXPublicKey(t.CollectionCreator.Key)
+	if err != nil {
+		return err
+	}
+	// Encode the DER bytes to PEM format
+	pemBytes := pem.EncodeToMemory(&pem.Block{
+		Type:  "PUBLIC KEY",
+		Bytes: derBytes,
+	})
+	// gob encode the pemBytes
+	enc.Encode(pemBytes)
+
+	// encode the signature
+	err = enc.Encode(t.Signature)
+	if err != nil {
+		return err
+	}
+
+	// encode the metadata
+	err = enc.Encode(t.Metadata)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+type MintTransactionDecoder struct{}
+
+func NewMintTransactionDecoder() *MintTransactionDecoder {
+	return &MintTransactionDecoder{}
+}
+
+func (d *MintTransactionDecoder) Decode(r io.Reader, t *MintTransaction) error {
+	dec := gob.NewDecoder(r)
+
+	// decode the fee
+	err := dec.Decode(&t.Fee)
+	if err != nil {
+		return err
+	}
+
+	// decode the NFT
+	err = dec.Decode(&t.NFT)
+	if err != nil {
+		return err
+	}
+
+	// decode the collection
+	err = dec.Decode(&t.Collection)
+	if err != nil {
+		return err
+	}
+
+	// decode the collection creator / public key
+	// Decode the public key
+	var pubKeyBytes []byte
+	// Decode from gob
+	err = dec.Decode(&pubKeyBytes)
+	if err != nil {
+		return err
+	}
+	// Parse the PEM-encoded public key
+	block, _ := pem.Decode(pubKeyBytes)
+	if block == nil {
+		return fmt.Errorf("failed to decode PEM block containing public key")
+	}
+	pubKey, err := x509.ParsePKIXPublicKey(block.Bytes)
+	if err != nil {
+		return err
+	}
+	ecdsaPubKey, ok := pubKey.(*ecdsa.PublicKey)
+	if !ok {
+		return fmt.Errorf("failed to convert public key to ECDSA format")
+	}
+	t.CollectionCreator.Key = ecdsaPubKey
+
+	// decode the signature
+	err = dec.Decode(&t.Signature)
+	if err != nil {
+		return err
+	}
+
+	// decode the metadata
+	err = dec.Decode(&t.Metadata)
 	if err != nil {
 		return err
 	}

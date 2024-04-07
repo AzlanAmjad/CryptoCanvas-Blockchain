@@ -29,5 +29,6 @@ require (
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/syndtr/goleveldb v1.0.1-0.20200815110645-5c35d600f0ca
 	github.com/tendermint/tendermint v0.35.9
+	golang.org/x/exp v0.0.0-20240404231335-c0f41cb1a7a0
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
