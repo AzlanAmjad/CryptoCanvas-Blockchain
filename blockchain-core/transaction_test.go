@@ -25,6 +25,35 @@ func randomTransactionWithSignature(t *testing.T) *Transaction {
 	return transaction
 }
 
+func TestCryptoTransferTransactionEncodeAndDecode(t *testing.T) {
+	// Create a new crypto transfer transaction.
+	privKey := crypto.GeneratePrivateKey()
+	transaction := &CryptoTransferTransaction{
+		Fee:    100,
+		Amount: 1000,
+		To:     privKey.GetPublicKey(),
+	}
+
+	// Encode the transaction.
+	buf := bytes.Buffer{}
+	err := transaction.Encode(&buf, NewCryptoTransferTransactionEncoder())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Decode the transaction.
+	decoded_transaction := &CryptoTransferTransaction{}
+	err = decoded_transaction.Decode(&buf, NewCryptoTransferTransactionDecoder())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	assert.Equal(t, transaction.Fee, decoded_transaction.Fee)
+	assert.Equal(t, transaction.Amount, decoded_transaction.Amount)
+	assert.Equal(t, transaction.To, decoded_transaction.To)
+	assert.Equal(t, transaction, decoded_transaction)
+}
+
 func TestMintTransactionEncodeAndDecode(t *testing.T) {
 	// Create a new mint transaction.
 	transaction := &MintTransaction{

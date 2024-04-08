@@ -82,8 +82,19 @@ func NewServer(options ServerOptions) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	// temporary account states
+	// TODO: make a proper coinbase with a static private key / public key / initial balance
+	accountStates := core.NewAccountStates()
+	if options.PrivateKey != nil {
+		// add balance using the private key of the validator node
+		pubKey := options.PrivateKey.GetPublicKey()
+		address := pubKey.GetAddress()
+		accountStates.AddBalance(address, 10000000000)
+	}
+
 	// create new blockchain with the LevelDB storage
-	bc, err := core.NewBlockchain(storage, genesisBlock(), options.ID, memPool)
+	bc, err := core.NewBlockchain(storage, genesisBlock(), options.ID, memPool, accountStates)
 	if err != nil {
 		return nil, err
 	}

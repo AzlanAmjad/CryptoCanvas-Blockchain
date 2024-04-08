@@ -18,6 +18,7 @@ type Blockchain struct {
 	BlockHeaders        []*BlockHeader
 	BlockHeadersHashMap map[types.Hash]*BlockHeader
 	Storage             Storage
+	AccountStates       *AccountStates
 
 	// temporary blockchain state, later should be persisted on disk
 	CollectionState map[types.Hash]*CollectionTransaction
@@ -35,13 +36,14 @@ type Blockchain struct {
 }
 
 // NewBlockchain creates a new empty blockchain. With the default block validator.
-func NewBlockchain(storage Storage, genesis *Block, ID string, mempool *TxPool) (*Blockchain, error) {
+func NewBlockchain(storage Storage, genesis *Block, ID string, mempool *TxPool, as *AccountStates) (*Blockchain, error) {
 	bc := &Blockchain{
 		BlockHeaders:        make([]*BlockHeader, 0),
 		BlockHeadersHashMap: make(map[types.Hash]*BlockHeader),
 		CollectionState:     make(map[types.Hash]*CollectionTransaction),
 		MintState:           make(map[types.Hash]*MintTransaction),
 		Storage:             storage,
+		AccountStates:       as, // TODO: persist on disk and load from disk on startup
 		ID:                  ID,
 		memPool:             mempool,
 	}
@@ -173,6 +175,35 @@ func (bc *Blockchain) AddBlock(block *Block) (int, error) {
 			bc.MintState[tx.GetHash(block.TransactionHasher)] = mint_tx
 
 			bc.Logger.Log("msg", "Mint transaction processed", "collection_hash", mint_tx.Collection, "nft_hash", mint_tx.NFT)
+		case TxCryptoTransfer:
+			// decode the transaction
+			crypto_transfer_tx := &CryptoTransferTransaction{}
+			err := crypto_transfer_tx.Decode(bytes.NewReader(tx.Data), NewCryptoTransferTransactionDecoder())
+			if err != nil {
+				bc.Logger.Log("msg", "Error decoding crypto transfer transaction", "error", err.Error())
+				continue
+			}
+
+			// transfer the amount from the sender to the receiver
+			err = bc.AccountStates.Transfer(tx.From.GetAddress(), crypto_transfer_tx.To.GetAddress(), crypto_transfer_tx.Amount)
+			if err != nil {
+				bc.Logger.Log("msg", "Error transferring amount", "error", err.Error())
+				continue
+			}
+
+			bc.Logger.Log("msg", "Crypto transfer transaction processed", "from", tx.From.String(), "to", crypto_transfer_tx.To.String(), "amount", crypto_transfer_tx.Amount)
+
+			from_balance, err := bc.AccountStates.GetBalance(tx.From.GetAddress())
+			if err != nil {
+				bc.Logger.Log("msg", "Error getting balance", "error", err.Error())
+				continue
+			}
+			to_balance, err := bc.AccountStates.GetBalance(crypto_transfer_tx.To.GetAddress())
+			if err != nil {
+				bc.Logger.Log("msg", "Error getting balance", "error", err.Error())
+				continue
+			}
+			bc.Logger.Log("from balance", from_balance, "to balance", to_balance)
 		default:
 			fmt.Println("Unknown transaction type")
 		}

@@ -62,9 +62,10 @@ func main() {
 	}
 
 	var localNode *network.Server
+	var privateKey crypto.PrivateKey
 	if isValidator == "y" {
 		// generate private key
-		privateKey := crypto.GeneratePrivateKey()
+		privateKey = crypto.GeneratePrivateKey()
 		// create local node
 		localNode = makeServer(id, &privateKey, addr, APIaddr)
 	} else {
@@ -76,7 +77,7 @@ func main() {
 	go localNode.Start()
 
 	// start TCP tester
-	go tcpTesterTransactionSender()
+	go tcpTesterTransactionSender(privateKey)
 
 	select {}
 }
@@ -106,10 +107,11 @@ func makeServer(id string, privateKey *crypto.PrivateKey, addr net.Addr, APIaddr
 	return server
 }
 
-func tcpTesterTransactionSender() {
+func tcpTesterTransactionSender(validatorPrivKey crypto.PrivateKey) {
 	// create a new http client to send transaction to nodes REST API
 	client := http.DefaultClient
 	privateKey := crypto.GeneratePrivateKey()
+	toPrivateKey := crypto.GeneratePrivateKey()
 
 	msg, collection_hash := makeCollectionTransactionMessage(privateKey)
 	_, err := client.Post("http://localhost:8080/transaction", "application/octet-stream", bytes.NewReader(msg))
@@ -117,12 +119,23 @@ func tcpTesterTransactionSender() {
 		logrus.WithError(err).Fatal("Failed to send collection transaction to API")
 	}
 
-	// send the transaction to the API
+	// send mint transactions to the API
 	for i := 0; i < 20; i++ {
 		msg := makeMintTransactionMessage(privateKey, collection_hash)
 		_, err := client.Post("http://localhost:8080/transaction", "application/octet-stream", bytes.NewReader(msg))
 		if err != nil {
 			logrus.WithError(err).Fatal("Failed to send mint transaction to API")
+		}
+		// wait for a bit
+		time.Sleep(1000 * time.Millisecond)
+	}
+
+	// send crypto transfer transaction to the API
+	for i := 0; i < 20; i++ {
+		msg := makeCryptoTransferTransactionMessage(validatorPrivKey, toPrivateKey)
+		_, err := client.Post("http://localhost:8080/transaction", "application/octet-stream", bytes.NewReader(msg))
+		if err != nil {
+			logrus.WithError(err).Fatal("Failed to send crypto transfer transaction to API")
 		}
 		// wait for a bit
 		time.Sleep(1000 * time.Millisecond)
@@ -186,6 +199,38 @@ func makeMintTransactionMessage(privateKey crypto.PrivateKey, collection types.H
 
 	tx := core.NewTransaction(buf.Bytes())
 	tx.Type = core.TxMint
+
+	// sign the transaction
+	tx.Sign(&privateKey)
+
+	// encode the transaction
+	buf = bytes.Buffer{}
+	err = tx.Encode(&buf, core.NewTransactionEncoder())
+	if err != nil {
+		logrus.WithError(err).Fatal("Failed to encode transaction")
+	}
+
+	// create a message
+	msg := network.NewMessage(network.Transaction, buf.Bytes())
+	return msg.Bytes()
+}
+
+func makeCryptoTransferTransactionMessage(privateKey crypto.PrivateKey, toPrivateKey crypto.PrivateKey) []byte {
+	// make crypto transfer transaction and encode it
+	crypto_transfer_tx := &core.CryptoTransferTransaction{
+		Fee:    100,
+		To:     toPrivateKey.GetPublicKey(),
+		Amount: 100,
+	}
+
+	buf := bytes.Buffer{}
+	err := crypto_transfer_tx.Encode(&buf, core.NewCryptoTransferTransactionEncoder())
+	if err != nil {
+		logrus.WithError(err).Fatal("Failed to encode crypto transfer transaction")
+	}
+
+	tx := core.NewTransaction(buf.Bytes())
+	tx.Type = core.TxCryptoTransfer
 
 	// sign the transaction
 	tx.Sign(&privateKey)

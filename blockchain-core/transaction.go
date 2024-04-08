@@ -16,8 +16,25 @@ type TransactionType byte
 const (
 	TxCollection TransactionType = iota
 	TxMint
+	TxCryptoTransfer
 	TxCommon // placeholder for future transaction types, so we can handle arbitrary transaction types.
 )
+
+type CryptoTransferTransaction struct {
+	Fee    uint64               // fee for the transaction
+	To     crypto.PublicKey     // who we are sending to
+	Amount types.CurrencyAmount // how much we are sending
+}
+
+// Encode encodes a crypto transfer transaction to a writer, in a modular fashion.
+func (t *CryptoTransferTransaction) Encode(w io.Writer, enc Encoder[*CryptoTransferTransaction]) error {
+	return enc.Encode(w, t)
+}
+
+// Decode decodes a crypto transfer transaction from a reader, in a modular fashion.
+func (t *CryptoTransferTransaction) Decode(r io.Reader, dec Decoder[*CryptoTransferTransaction]) error {
+	return dec.Decode(r, t)
+}
 
 type CollectionTransaction struct {
 	Fee      uint64
@@ -79,7 +96,7 @@ func (t *MintTransaction) Decode(r io.Reader, dec Decoder[*MintTransaction]) err
 // Transaction struct to hold types of transactions.
 type Transaction struct {
 	Type  TransactionType
-	Data  []byte // holds the encoded transaction data.
+	Data  []byte // holds the encoded transaction data or any arbitrary data.
 	Nonce uint64
 
 	From      crypto.PublicKey

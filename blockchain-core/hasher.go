@@ -30,6 +30,9 @@ func NewTransactionHasher() *TransactionHasher {
 	return &TransactionHasher{}
 }
 
+// we hash the Nonce and Data
+// this is fine because all transaction information is in data
+// TODO: consider hashing the transaction type as well
 func (h *TransactionHasher) Hash(tx *Transaction) types.Hash {
 	// convert Nonce to byte array
 	buf := make([]byte, 8)

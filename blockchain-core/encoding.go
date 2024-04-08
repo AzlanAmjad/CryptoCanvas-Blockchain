@@ -295,8 +295,6 @@ func (d *TransactionDecoder) Decode(r io.Reader, t *Transaction) error {
 	return nil
 }
 
-// TODO: Implement the encoder and decoder for the following transactions
-
 // Default collection transaction encoder and decoder
 type CollectionTransactionEncoder struct{}
 
@@ -474,6 +472,93 @@ func (d *MintTransactionDecoder) Decode(r io.Reader, t *MintTransaction) error {
 
 	// decode the metadata
 	err = dec.Decode(&t.Metadata)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// Default transfer transaction encoder and decoder
+type CryptoTransferTransactionEncoder struct{}
+
+func NewCryptoTransferTransactionEncoder() *CryptoTransferTransactionEncoder {
+	return &CryptoTransferTransactionEncoder{}
+}
+
+func (e *CryptoTransferTransactionEncoder) Encode(w io.Writer, t *CryptoTransferTransaction) error {
+	enc := gob.NewEncoder(w)
+
+	// encode the fee
+	err := enc.Encode(t.Fee)
+	if err != nil {
+		return err
+	}
+
+	// encode the to / public key
+	// Encode the public key
+	// Marshal the public key to ASN.1 DER format
+	derBytes, err := x509.MarshalPKIXPublicKey(t.To.Key)
+	if err != nil {
+		return err
+	}
+	// Encode the DER bytes to PEM format
+	pemBytes := pem.EncodeToMemory(&pem.Block{
+		Type:  "PUBLIC KEY",
+		Bytes: derBytes,
+	})
+	// gob encode the pemBytes
+	enc.Encode(pemBytes)
+
+	// encode the amount
+	err = enc.Encode(t.Amount)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+type CryptoTransferTransactionDecoder struct{}
+
+func NewCryptoTransferTransactionDecoder() *CryptoTransferTransactionDecoder {
+	return &CryptoTransferTransactionDecoder{}
+}
+
+func (d *CryptoTransferTransactionDecoder) Decode(r io.Reader, t *CryptoTransferTransaction) error {
+	dec := gob.NewDecoder(r)
+
+	// decode the fee
+	err := dec.Decode(&t.Fee)
+	if err != nil {
+		return err
+	}
+
+	// decode the to / public key
+	// Decode the public key
+	var pubKeyBytes []byte
+	// Decode from gob
+	err = dec.Decode(&pubKeyBytes)
+	if err != nil {
+		return err
+	}
+	// Parse the PEM-encoded public key
+	block, _ := pem.Decode(pubKeyBytes)
+	if block == nil {
+		return fmt.Errorf("failed to decode PEM block containing public key")
+	}
+	pubKey, err := x509.ParsePKIXPublicKey(block.Bytes)
+	if err != nil {
+		return err
+	}
+	ecdsaPubKey, ok := pubKey.(*ecdsa.PublicKey)
+	if !ok {
+		return fmt.Errorf("failed to convert public key to ECDSA format")
+	}
+	t.To.Key = ecdsaPubKey
+
+	// decode the amount
+	err = dec.Decode(&t.Amount)
 	if err != nil {
 		return err
 	}
