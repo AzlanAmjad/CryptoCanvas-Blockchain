@@ -151,7 +151,7 @@ func (t *Transaction) Sign(privateKey *crypto.PrivateKey) error {
 // VerifySignature verifies the signature of the transaction.
 func (t *Transaction) VerifySignature() (bool, error) {
 	if t.Signature == nil {
-		return false, fmt.Errorf("no signature to verify")
+		return false, fmt.Errorf("no transaction signature to verify")
 	}
 
 	return t.From.Verify(t.Data, t.Signature), nil

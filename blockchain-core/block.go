@@ -110,12 +110,15 @@ func (b *Block) Sign(privateKey *crypto.PrivateKey) error {
 // VerifySignature verifies the signature of the block.
 func (b *Block) VerifySignature() (bool, error) {
 	if b.Signature == nil {
-		return false, fmt.Errorf("no signature to verify")
+		return false, fmt.Errorf("no block signature to verify")
 	}
 
 	// Verify the block transactions
 	for _, tx := range b.Transactions {
-		if valid, err := tx.VerifySignature(); !valid {
+		// invalid signature, and transaction is not from coinbase account
+		// coinbase account initiated transactions are not signed, therefor not verified
+		// TODO: this is not a secure method of creating coinbase transactions, must find a better way
+		if valid, err := tx.VerifySignature(); !valid && tx.From != *GetCoinbaseAccount() {
 			return false, err
 		}
 	}

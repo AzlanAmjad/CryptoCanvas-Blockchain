@@ -25,6 +25,7 @@ import (
 var defaultBlockTime = 5 * time.Second
 
 const BLOCKS_TOO_HIGH_THRESHOLD = 5
+const BLOCK_REWARD = 5
 
 // One node can have multiple transports, for example, a TCP transport and a UDP transport.
 type ServerOptions struct {
@@ -694,12 +695,19 @@ func (s *Server) createNewBlock() error {
 		return err
 	}
 
+	// create the coinbase transaction for this block, this nodes validator account
+	// will receive a block reward for creating the block, this reward is stored as a transaction
+	node_pub_key := s.ServerOptions.PrivateKey.GetPublicKey()
+	coinbase_tx := GetRewardCoinbaseTx(&node_pub_key, BLOCK_REWARD)
+	transactions := []*core.Transaction{&coinbase_tx}
+
 	// create a new block, with all mempool transactions
 	// normally we might just include a specific number of transactions in each block
 	// but here we are including all transactions in the mempool.
 	// once we know how our transactions will be structured
 	// we can include a specific number of transactions in each block.
-	transactions := s.memPool.GetPendingTransactions()
+	mempool_transactions := s.memPool.GetPendingTransactions()
+	transactions = append(transactions, mempool_transactions...)
 	// flush mempool since we got all the transactions
 	// IMPORTANT: we flush right away because while we execute
 	// the block creation logic, new transactions might come in, since
@@ -726,7 +734,10 @@ func (s *Server) createNewBlock() error {
 		// something ent wrong, we need to re-add the transactions to the mempool
 		// so that they can be included in the next block.
 		for _, tx := range transactions {
-			s.memPool.Add(tx)
+			// if it is not the coinbase transaction
+			if tx.From != *core.GetCoinbaseAccount() {
+				s.memPool.Add(tx)
+			}
 		}
 
 		return err
@@ -749,22 +760,23 @@ func genesisBlock() *core.Block {
 	b.Header.Timestamp = 0000000000     // setting to zero for all genesis blocks created across all nodes
 	b.Header.Index = 0
 
-	coinbase := core.GetCoinbaseAccount()
-	if coinbase == nil {
-		logrus.Fatal("Failed to get coinbase account")
-		panic("Failed to get coinbase account")
-	}
-	coinbase_tx := GetCoinbaseTx(*coinbase, 21_000_000) // 21 million coins (total supply of tokens)
+	coinbase_tx := GetCoinbaseTx(21_000_000) // 21 million coins (total supply of tokens)
 
 	b.Transactions = append(b.Transactions, &coinbase_tx)
 
 	return b
 }
 
-func GetCoinbaseTx(coinbase_account crypto.PublicKey, amount types.CurrencyAmount) core.Transaction {
+func GetCoinbaseTx(amount types.CurrencyAmount) core.Transaction {
+	coinbase_account := core.GetCoinbaseAccount()
+	if coinbase_account == nil {
+		logrus.Fatal("Failed to get coinbase account")
+		panic("Failed to get coinbase account")
+	}
+
 	crypto_transfer_tx := &core.CryptoTransferTransaction{
 		Fee:    0,
-		To:     coinbase_account,
+		To:     *coinbase_account,
 		Amount: amount,
 	}
 
@@ -776,6 +788,31 @@ func GetCoinbaseTx(coinbase_account crypto.PublicKey, amount types.CurrencyAmoun
 
 	tx := core.NewTransaction(buf.Bytes())
 	tx.Type = core.TxCryptoTransfer
-	tx.From = coinbase_account
+	tx.From = *coinbase_account
+	return *tx
+}
+
+func GetRewardCoinbaseTx(to *crypto.PublicKey, amount types.CurrencyAmount) core.Transaction {
+	coinbase_account := core.GetCoinbaseAccount()
+	if coinbase_account == nil {
+		logrus.Fatal("Failed to get coinbase account")
+		panic("Failed to get coinbase account")
+	}
+
+	crypto_transfer_tx := &core.CryptoTransferTransaction{
+		Fee:    0,
+		To:     *to,
+		Amount: amount,
+	}
+
+	buf := bytes.Buffer{}
+	err := crypto_transfer_tx.Encode(&buf, core.NewCryptoTransferTransactionEncoder())
+	if err != nil {
+		logrus.WithError(err).Fatal("Failed to encode crypto transfer transaction")
+	}
+
+	tx := core.NewTransaction(buf.Bytes())
+	tx.Type = core.TxCryptoTransfer
+	tx.From = *coinbase_account
 	return *tx
 }
