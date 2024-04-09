@@ -40,8 +40,8 @@ func (bv *BlockValidator) ValidateBlock(block *Block) (int, error) {
 		return 3, fmt.Errorf("block already exists, block index: %d", block.Header.Index)
 	}
 	// 4. verify the block signature with blocks public key
-	if verified, _ := block.VerifySignature(); !verified {
-		return 4, fmt.Errorf("block signature is invalid, block index: %d", block.Header.Index)
+	if verified, err := block.VerifySignature(); !verified {
+		return 4, fmt.Errorf("block signature is invalid, block index: %d, error: %s", block.Header.Index, err.Error())
 	}
 	// 5. check if the block index is larger than the expected blockchain height
 	if block.Header.Index > bv.BC.GetHeight()+1 {
@@ -66,12 +66,17 @@ func (bv *BlockValidator) ValidateBlock(block *Block) (int, error) {
 	}
 	// 8. check if the block data hash is valid
 	if block.Header.Index > 0 { // if the block is not the genesis block
-		dataHash, err := CalculateDataHash(block.Transactions, block.TransactionEncoder)
+		dataHash, err := CalculateDataHash(block.Transactions, block.TransactionHasher)
 		if err != nil {
 			return 8, fmt.Errorf("failed to calculate data hash, block index: %d, blockchain height: %d", block.Header.Index, bv.BC.GetHeight())
 		}
 		if dataHash != block.Header.DataHash {
-			return 8, fmt.Errorf("data hash is invalid, block index: %d, blockchain height: %d", block.Header.Index, bv.BC.GetHeight())
+			return 8, fmt.Errorf("data hash is invalid, block index: %d, blockchain height: %d, expected: %s, got: %s",
+				block.Header.Index,
+				bv.BC.GetHeight(),
+				block.Header.DataHash,
+				dataHash,
+			)
 		}
 	}
 	return 0, nil

@@ -24,7 +24,7 @@ func getRandomBlock(t *testing.T, index uint32, prevBlockHash types.Hash) *Block
 	assert.NotNil(t, b)
 
 	// data hash
-	dataHash, err := CalculateDataHash(b.Transactions, b.TransactionEncoder)
+	dataHash, err := CalculateDataHash(b.Transactions, b.TransactionHasher)
 	if err != nil {
 		t.Fatalf("failed to calculate data hash: %s", err)
 	}

@@ -235,9 +235,7 @@ func TestTransactionEncodeAndDecode(t *testing.T) {
 	privateKey := crypto.GeneratePrivateKey()
 
 	// Create a new transaction.
-	transaction := &Transaction{
-		Data: []byte("Hello, world!"),
-	}
+	transaction := NewTransaction([]byte("Hello, world!"))
 
 	// Sign the transaction with the private key.
 	err := transaction.Sign(&privateKey)

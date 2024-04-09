@@ -22,6 +22,47 @@ type Decoder[T any] interface {
 	Decode(r io.Reader, v T) error
 }
 
+func EncodePublicKey(enc *gob.Encoder, key *ecdsa.PublicKey) error {
+	// encode the Validator / Public Key of the block
+	// Marshal the public key to ASN.1 DER format
+	derBytes, err := x509.MarshalPKIXPublicKey(key)
+	if err != nil {
+		return err
+	}
+	// Encode the DER bytes to PEM format
+	pemBytes := pem.EncodeToMemory(&pem.Block{
+		Type:  "PUBLIC KEY",
+		Bytes: derBytes,
+	})
+	// gob encode the pemBytes
+	enc.Encode(pemBytes)
+	return nil
+}
+
+func DecodePublicKey(dec *gob.Decoder) (*ecdsa.PublicKey, error) {
+	// Decode the Validator / Public Key of the block
+	var pubKeyBytes []byte
+	// Decode from gob
+	err := dec.Decode(&pubKeyBytes)
+	if err != nil {
+		return nil, err
+	}
+	// Parse the PEM-encoded public key
+	block, _ := pem.Decode(pubKeyBytes)
+	if block == nil {
+		return nil, fmt.Errorf("failed to decode PEM block containing public key")
+	}
+	pubKey, err := x509.ParsePKIXPublicKey(block.Bytes)
+	if err != nil {
+		return nil, err
+	}
+	ecdsaPubKey, ok := pubKey.(*ecdsa.PublicKey)
+	if !ok {
+		return nil, fmt.Errorf("failed to convert public key to ECDSA format")
+	}
+	return ecdsaPubKey, nil
+}
+
 // Default block encoder and decoder
 
 type BlockEncoder struct{}
@@ -60,19 +101,11 @@ func (e *BlockEncoder) Encode(w io.Writer, b *Block) error {
 	}
 
 	if validator_exists {
-		// encode the Validator / Public Key of the block
-		// Marshal the public key to ASN.1 DER format
-		derBytes, err := x509.MarshalPKIXPublicKey(b.Validator.Key)
+		// encode the public key
+		err = EncodePublicKey(enc, b.Validator.Key)
 		if err != nil {
 			return err
 		}
-		// Encode the DER bytes to PEM format
-		pemBytes := pem.EncodeToMemory(&pem.Block{
-			Type:  "PUBLIC KEY",
-			Bytes: derBytes,
-		})
-		// gob encode the pemBytes
-		enc.Encode(pemBytes)
 	}
 
 	// encode if there is a signature
@@ -117,12 +150,12 @@ func (d *BlockDecoder) Decode(r io.Reader, b *Block) error {
 	// decode the transactions
 	for i := 0; i < numTransactions; i++ {
 		tx_dec := NewTransactionDecoder()
-		tx := Transaction{}
+		tx := NewTransaction(nil)
 		err = tx.Decode(r, tx_dec)
 		if err != nil {
 			return fmt.Errorf("failed to decode transaction: %s", err)
 		}
-		b.Transactions = append(b.Transactions, &tx)
+		b.Transactions = append(b.Transactions, tx)
 	}
 
 	// decode if there is a Validator
@@ -133,27 +166,11 @@ func (d *BlockDecoder) Decode(r io.Reader, b *Block) error {
 	}
 
 	if validator_exists {
-		// Decode the Validator / Public Key of the block
-		var pubKeyBytes []byte
-		// Decode from gob
-		err = dec.Decode(&pubKeyBytes)
+		// decode the public key
+		b.Validator.Key, err = DecodePublicKey(dec)
 		if err != nil {
 			return err
 		}
-		// Parse the PEM-encoded public key
-		block, _ := pem.Decode(pubKeyBytes)
-		if block == nil {
-			return fmt.Errorf("failed to decode PEM block containing public key")
-		}
-		pubKey, err := x509.ParsePKIXPublicKey(block.Bytes)
-		if err != nil {
-			return err
-		}
-		ecdsaPubKey, ok := pubKey.(*ecdsa.PublicKey)
-		if !ok {
-			return fmt.Errorf("failed to convert public key to ECDSA format")
-		}
-		b.Validator.Key = ecdsaPubKey
 	}
 
 	// decode if there is a signature
@@ -202,24 +219,34 @@ func (e *TransactionEncoder) Encode(w io.Writer, t *Transaction) error {
 		return err
 	}
 
-	// Encode the public key
-	// Marshal the public key to ASN.1 DER format
-	derBytes, err := x509.MarshalPKIXPublicKey(t.From.Key)
+	// Encode if there is a public key
+	public_key_exists := t.From.Key != nil
+	err = enc.Encode(public_key_exists)
 	if err != nil {
 		return err
 	}
-	// Encode the DER bytes to PEM format
-	pemBytes := pem.EncodeToMemory(&pem.Block{
-		Type:  "PUBLIC KEY",
-		Bytes: derBytes,
-	})
-	// gob encode the pemBytes
-	enc.Encode(pemBytes)
 
-	// encode the signature
-	err = enc.Encode(t.Signature)
+	if public_key_exists {
+		// Encode the public key
+		err = EncodePublicKey(enc, t.From.Key)
+		if err != nil {
+			return err
+		}
+	}
+
+	// encode if the signature exists
+	signature_exists := t.Signature != nil
+	err = enc.Encode(signature_exists)
 	if err != nil {
 		return err
+	}
+
+	if signature_exists {
+		// encode the signature
+		err = enc.Encode(t.Signature)
+		if err != nil {
+			return err
+		}
 	}
 
 	// encode the first seen timestamp
@@ -258,32 +285,34 @@ func (d *TransactionDecoder) Decode(r io.Reader, t *Transaction) error {
 		return err
 	}
 
-	// Decode the public key
-	var pubKeyBytes []byte
-	// Decode from gob
-	err = dec.Decode(&pubKeyBytes)
+	// Decode if there is a public key
+	var public_key_exists bool
+	err = dec.Decode(&public_key_exists)
 	if err != nil {
 		return err
 	}
-	// Parse the PEM-encoded public key
-	block, _ := pem.Decode(pubKeyBytes)
-	if block == nil {
-		return fmt.Errorf("failed to decode PEM block containing public key")
-	}
-	pubKey, err := x509.ParsePKIXPublicKey(block.Bytes)
-	if err != nil {
-		return err
-	}
-	ecdsaPubKey, ok := pubKey.(*ecdsa.PublicKey)
-	if !ok {
-		return fmt.Errorf("failed to convert public key to ECDSA format")
-	}
-	t.From.Key = ecdsaPubKey
 
-	// Decode the signature
-	err = dec.Decode(&t.Signature)
+	if public_key_exists {
+		// Decode the public key
+		t.From.Key, err = DecodePublicKey(dec)
+		if err != nil {
+			return err
+		}
+	}
+
+	// decode if the signature exists
+	var signature_exists bool
+	err = dec.Decode(&signature_exists)
 	if err != nil {
 		return err
+	}
+
+	if signature_exists {
+		// Decode the signature
+		err = dec.Decode(&t.Signature)
+		if err != nil {
+			return err
+		}
 	}
 
 	// Decode the first seen timestamp
@@ -384,25 +413,34 @@ func (e *MintTransactionEncoder) Encode(w io.Writer, t *MintTransaction) error {
 		return err
 	}
 
-	// encode the collection creator / public key
-	// Encode the public key
-	// Marshal the public key to ASN.1 DER format
-	derBytes, err := x509.MarshalPKIXPublicKey(t.CollectionCreator.Key)
+	// encode if there is a collection creator
+	collection_creator_exists := t.CollectionCreator.Key != nil
+	err = enc.Encode(collection_creator_exists)
 	if err != nil {
 		return err
 	}
-	// Encode the DER bytes to PEM format
-	pemBytes := pem.EncodeToMemory(&pem.Block{
-		Type:  "PUBLIC KEY",
-		Bytes: derBytes,
-	})
-	// gob encode the pemBytes
-	enc.Encode(pemBytes)
 
-	// encode the signature
-	err = enc.Encode(t.Signature)
+	if collection_creator_exists {
+		// encode the collection creator / public key
+		err = EncodePublicKey(enc, t.CollectionCreator.Key)
+		if err != nil {
+			return err
+		}
+	}
+
+	// encode if there is a signature
+	signature_exists := t.Signature != nil
+	err = enc.Encode(signature_exists)
 	if err != nil {
 		return err
+	}
+
+	if signature_exists {
+		// encode the signature
+		err = enc.Encode(t.Signature)
+		if err != nil {
+			return err
+		}
 	}
 
 	// encode the metadata
@@ -441,33 +479,34 @@ func (d *MintTransactionDecoder) Decode(r io.Reader, t *MintTransaction) error {
 		return err
 	}
 
-	// decode the collection creator / public key
-	// Decode the public key
-	var pubKeyBytes []byte
-	// Decode from gob
-	err = dec.Decode(&pubKeyBytes)
+	// decode if there is a collection creator
+	var collection_creator_exists bool
+	err = dec.Decode(&collection_creator_exists)
 	if err != nil {
 		return err
 	}
-	// Parse the PEM-encoded public key
-	block, _ := pem.Decode(pubKeyBytes)
-	if block == nil {
-		return fmt.Errorf("failed to decode PEM block containing public key")
-	}
-	pubKey, err := x509.ParsePKIXPublicKey(block.Bytes)
-	if err != nil {
-		return err
-	}
-	ecdsaPubKey, ok := pubKey.(*ecdsa.PublicKey)
-	if !ok {
-		return fmt.Errorf("failed to convert public key to ECDSA format")
-	}
-	t.CollectionCreator.Key = ecdsaPubKey
 
-	// decode the signature
-	err = dec.Decode(&t.Signature)
+	if collection_creator_exists {
+		// decode the collection creator / public key
+		t.CollectionCreator.Key, err = DecodePublicKey(dec)
+		if err != nil {
+			return err
+		}
+	}
+
+	// decode if there is a signature
+	var signature_exists bool
+	err = dec.Decode(&signature_exists)
 	if err != nil {
 		return err
+	}
+
+	if signature_exists {
+		// decode the signature
+		err = dec.Decode(&t.Signature)
+		if err != nil {
+			return err
+		}
 	}
 
 	// decode the metadata
@@ -495,20 +534,20 @@ func (e *CryptoTransferTransactionEncoder) Encode(w io.Writer, t *CryptoTransfer
 		return err
 	}
 
-	// encode the to / public key
-	// Encode the public key
-	// Marshal the public key to ASN.1 DER format
-	derBytes, err := x509.MarshalPKIXPublicKey(t.To.Key)
+	// encode if the to / public key exists
+	to_exists := t.To.Key != nil
+	err = enc.Encode(to_exists)
 	if err != nil {
 		return err
 	}
-	// Encode the DER bytes to PEM format
-	pemBytes := pem.EncodeToMemory(&pem.Block{
-		Type:  "PUBLIC KEY",
-		Bytes: derBytes,
-	})
-	// gob encode the pemBytes
-	enc.Encode(pemBytes)
+
+	if to_exists {
+		// encode the to / public key
+		err = EncodePublicKey(enc, t.To.Key)
+		if err != nil {
+			return err
+		}
+	}
 
 	// encode the amount
 	err = enc.Encode(t.Amount)
@@ -534,28 +573,20 @@ func (d *CryptoTransferTransactionDecoder) Decode(r io.Reader, t *CryptoTransfer
 		return err
 	}
 
-	// decode the to / public key
-	// Decode the public key
-	var pubKeyBytes []byte
-	// Decode from gob
-	err = dec.Decode(&pubKeyBytes)
+	// decode if the to / public key exists
+	var to_exists bool
+	err = dec.Decode(&to_exists)
 	if err != nil {
 		return err
 	}
-	// Parse the PEM-encoded public key
-	block, _ := pem.Decode(pubKeyBytes)
-	if block == nil {
-		return fmt.Errorf("failed to decode PEM block containing public key")
+
+	if to_exists {
+		// decode the to / public key
+		t.To.Key, err = DecodePublicKey(dec)
+		if err != nil {
+			return err
+		}
 	}
-	pubKey, err := x509.ParsePKIXPublicKey(block.Bytes)
-	if err != nil {
-		return err
-	}
-	ecdsaPubKey, ok := pubKey.(*ecdsa.PublicKey)
-	if !ok {
-		return fmt.Errorf("failed to convert public key to ECDSA format")
-	}
-	t.To.Key = ecdsaPubKey
 
 	// decode the amount
 	err = dec.Decode(&t.Amount)

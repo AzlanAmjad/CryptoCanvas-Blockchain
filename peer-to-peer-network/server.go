@@ -12,6 +12,7 @@ import (
 
 	core "github.com/AzlanAmjad/DreamscapeCanvas-Blockchain/blockchain-core"
 	crypto "github.com/AzlanAmjad/DreamscapeCanvas-Blockchain/cryptography"
+	types "github.com/AzlanAmjad/DreamscapeCanvas-Blockchain/data-types"
 	"github.com/go-kit/log"
 	"github.com/sirupsen/logrus"
 )
@@ -83,18 +84,8 @@ func NewServer(options ServerOptions) (*Server, error) {
 		return nil, err
 	}
 
-	// temporary account states
-	// TODO: make a proper coinbase with a static private key / public key / initial balance
-	accountStates := core.NewAccountStates()
-	if options.PrivateKey != nil {
-		// add balance using the private key of the validator node
-		pubKey := options.PrivateKey.GetPublicKey()
-		address := pubKey.GetAddress()
-		accountStates.AddBalance(address, 10000000000)
-	}
-
 	// create new blockchain with the LevelDB storage
-	bc, err := core.NewBlockchain(storage, genesisBlock(), options.ID, memPool, accountStates)
+	bc, err := core.NewBlockchain(storage, genesisBlock(), options.ID, memPool)
 	if err != nil {
 		return nil, err
 	}
@@ -757,5 +748,34 @@ func genesisBlock() *core.Block {
 	b.Header.DataHash = [32]byte{}      // initialize with an empty byte array
 	b.Header.Timestamp = 0000000000     // setting to zero for all genesis blocks created across all nodes
 	b.Header.Index = 0
+
+	coinbase := core.GetCoinbaseAccount()
+	if coinbase == nil {
+		logrus.Fatal("Failed to get coinbase account")
+		panic("Failed to get coinbase account")
+	}
+	coinbase_tx := GetCoinbaseTx(*coinbase, 21_000_000) // 21 million coins (total supply of tokens)
+
+	b.Transactions = append(b.Transactions, &coinbase_tx)
+
 	return b
+}
+
+func GetCoinbaseTx(coinbase_account crypto.PublicKey, amount types.CurrencyAmount) core.Transaction {
+	crypto_transfer_tx := &core.CryptoTransferTransaction{
+		Fee:    0,
+		To:     coinbase_account,
+		Amount: amount,
+	}
+
+	buf := bytes.Buffer{}
+	err := crypto_transfer_tx.Encode(&buf, core.NewCryptoTransferTransactionEncoder())
+	if err != nil {
+		logrus.WithError(err).Fatal("Failed to encode crypto transfer transaction")
+	}
+
+	tx := core.NewTransaction(buf.Bytes())
+	tx.Type = core.TxCryptoTransfer
+	tx.From = coinbase_account
+	return *tx
 }

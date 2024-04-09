@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"io"
 	"math/big"
 
 	types "github.com/AzlanAmjad/DreamscapeCanvas-Blockchain/data-types"
@@ -16,7 +17,8 @@ type PrivateKey struct {
 }
 
 type PublicKey struct {
-	Key *ecdsa.PublicKey
+	Key     *ecdsa.PublicKey
+	Address types.Address
 }
 
 type Signature struct {
@@ -25,16 +27,24 @@ type Signature struct {
 
 // GeneratePrivateKey generates a new private key.
 func GeneratePrivateKey() PrivateKey {
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	key, _ := GeneratePrivateKeyFromBytes(rand.Reader)
+	return *key
+}
+
+// GeneratePrivateKeyFromBytes generates a new private key from a byte array.
+func GeneratePrivateKeyFromBytes(r io.Reader) (*PrivateKey, error) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), r)
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
-	return PrivateKey{key}
+	return &PrivateKey{key}, nil
 }
 
 // PublicKey returns the public key for the private key.
 func (k *PrivateKey) GetPublicKey() PublicKey {
-	return PublicKey{k.key.Public().(*ecdsa.PublicKey)}
+	return PublicKey{
+		Key: k.key.Public().(*ecdsa.PublicKey),
+	}
 }
 
 // Sign signs the data with the private key.
@@ -52,6 +62,9 @@ func (k *PrivateKey) Sign(data []byte) (*Signature, error) {
 
 // ToBytes returns the public key as a byte array.
 func (k *PublicKey) ToBytes() []byte {
+	if k.Key == nil {
+		return []byte{}
+	}
 	publicKeyBytes := elliptic.MarshalCompressed(k.Key.Curve, k.Key.X, k.Key.Y)
 	return publicKeyBytes
 }
@@ -66,9 +79,14 @@ func (k *PublicKey) String() string {
 
 // GetAddress returns the address of the public key.
 func (k *PublicKey) GetAddress() types.Address {
+	if k.Address != [20]byte{} { // address is not 0 byte array
+		return k.Address
+	}
+
 	// Hash the public key and take the last 20 bytes.
 	publicKeyHash := sha256.Sum256(k.ToBytes())
-	return types.Address(publicKeyHash[len(publicKeyHash)-20:])
+	k.Address = types.Address(publicKeyHash[len(publicKeyHash)-20:])
+	return k.Address
 }
 
 // Verify verifies the signature of the data using the public key.

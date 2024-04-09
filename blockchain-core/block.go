@@ -80,7 +80,7 @@ func NewBlockWithTransactions(transactions []*Transaction) *Block {
 	b.Transactions = transactions
 
 	// calculate data hash
-	dataHash, err := CalculateDataHash(b.Transactions, b.TransactionEncoder)
+	dataHash, err := CalculateDataHash(b.Transactions, b.TransactionHasher)
 	if err != nil {
 		panic(err)
 	}
@@ -120,18 +120,6 @@ func (b *Block) VerifySignature() (bool, error) {
 		}
 	}
 
-	// Verify the block data hash
-	if b.TransactionEncoder == nil {
-		return false, fmt.Errorf("no transaction encoder")
-	}
-	dataHash, err := CalculateDataHash(b.Transactions, b.TransactionEncoder)
-	if err != nil {
-		return false, err
-	}
-	if dataHash != b.Header.DataHash {
-		return false, fmt.Errorf("invalid data hash")
-	}
-
 	// Verify the block signature
 	return b.Validator.Verify(b.Header.GetBytes(), b.Signature), nil
 }
@@ -157,17 +145,16 @@ func (b *Block) GetHash(hasher Hasher[*BlockHeader]) types.Hash {
 }
 
 // Calculate DataHash from transactions
-func CalculateDataHash(transactions []*Transaction, enc Encoder[*Transaction]) (types.Hash, error) {
-	buf := &bytes.Buffer{}
+func CalculateDataHash(transactions []*Transaction, hasher Hasher[*Transaction]) (types.Hash, error) {
+	final_buf := []byte{}
 
 	for _, tx := range transactions {
-		err := tx.Encode(buf, enc)
-		if err != nil {
-			return types.Hash{}, err
-		}
+		hash := tx.GetHash(hasher)
+		// append
+		final_buf = append(final_buf, hash[:]...)
 	}
 
-	hash := sha256.Sum256(buf.Bytes())
+	hash := sha256.Sum256(final_buf)
 
 	return types.Hash(hash), nil
 }

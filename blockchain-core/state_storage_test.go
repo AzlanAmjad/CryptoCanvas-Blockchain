@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	crypto "github.com/AzlanAmjad/DreamscapeCanvas-Blockchain/cryptography"
+	types "github.com/AzlanAmjad/DreamscapeCanvas-Blockchain/data-types"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -24,7 +25,7 @@ func TestAccountStateTransferFail(t *testing.T) {
 	assert.NotNil(t, err)
 }
 
-func TestSAccountStateTransferPass(t *testing.T) {
+func TestSAccountStateTransferSuccess(t *testing.T) {
 	// create a new state storage
 	state := NewAccountStates()
 
@@ -43,4 +44,14 @@ func TestSAccountStateTransferPass(t *testing.T) {
 	// transfer the funds
 	err := state.Transfer(fromAddress, toAddress, 200)
 	assert.Nil(t, err)
+
+	// check toAddress' balance
+	balance, err := state.GetBalance(toAddress)
+	assert.Nil(t, err)
+	assert.Equal(t, types.CurrencyAmount(200), balance)
+
+	// check fromAddress' balance
+	balance, err = state.GetBalance(fromAddress)
+	assert.Nil(t, err)
+	assert.Equal(t, types.CurrencyAmount(100), balance)
 }

@@ -73,12 +73,12 @@ func DefaultRPCDecoder(rpc ReceiveRPC) (*DecodedMessage, error) {
 
 	switch msg.Header {
 	case Transaction:
-		tx := core.Transaction{}
+		tx := core.NewTransaction(nil)
 		err = tx.Decode(bytes.NewReader(msg.Payload), core.NewTransactionDecoder())
 		if err != nil {
 			return nil, err
 		}
-		return &DecodedMessage{Header: msg.Header, From: rpc.From, Message: tx}, nil
+		return &DecodedMessage{Header: msg.Header, From: rpc.From, Message: *tx}, nil
 	case Block: // single block
 		block := core.NewBlock()
 		err = block.Decode(bytes.NewReader(msg.Payload), core.NewBlockDecoder())
