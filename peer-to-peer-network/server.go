@@ -51,11 +51,12 @@ type Server struct {
 	ServerOptions ServerOptions
 	isValidator   bool
 	// holds transactions that are not yet included in a block.
-	memPool     *core.TxPool
-	rpcChannel  chan ReceiveRPC
-	peerChannel chan *TCPPeer
-	quitChannel chan bool
-	Chain       *core.Blockchain
+	memPool           *core.TxPool
+	rpcChannel        chan ReceiveRPC
+	peerChannel       chan *TCPPeer
+	removePeerChannel chan *TCPPeer
+	quitChannel       chan bool
+	Chain             *core.Blockchain
 	// count of blocks that are sent to us that are too high for our chain
 	// used for syncing the blockchain with the peer in processBlock
 	blocks_too_high_count int
@@ -109,6 +110,7 @@ func NewServer(options ServerOptions) (*Server, error) {
 		memPool:               memPool,
 		rpcChannel:            make(chan ReceiveRPC),
 		peerChannel:           peerCh,
+		removePeerChannel:     make(chan *TCPPeer),
 		quitChannel:           make(chan bool),
 		Chain:                 bc,
 		blocks_too_high_count: 0,
@@ -214,7 +216,7 @@ func (s *Server) Start() error {
 			// print that peer was added
 			s.ServerOptions.Logger.Log("msg", "Peer added", "us", peer.conn.LocalAddr(), "peer", peer.conn.RemoteAddr())
 			// start reading from the peer
-			go peer.readLoop(s.rpcChannel)
+			go peer.readLoop(s.rpcChannel, s.removePeerChannel)
 
 			// synchronize with the new peer, we do not broadcast here due to problems
 			// with the underlying algorithm, it will result in us having a corrupted blockchain
@@ -223,6 +225,11 @@ func (s *Server) Start() error {
 			if err != nil {
 				logrus.WithError(err).Error("Failed to send getStatus to peer")
 			}
+		case peer := <-s.removePeerChannel:
+			// remove the peer from the list of peers.
+			delete(s.Peers, peer.conn.RemoteAddr())
+			// print the peer that was deleted
+			s.ServerOptions.Logger.Log("msg", "Peer removed", "us", peer.conn.LocalAddr(), "peer", peer.conn.RemoteAddr())
 		// receive RPC message to process
 		case rpc := <-s.rpcChannel:
 			// Decode the message.

@@ -12,6 +12,7 @@ import (
 
 // tcp buffer size const for reading from the connection
 const TCP_BUFFER_SIZE = 8192
+const FAIL_COUNT_LIMIT = 5
 
 // TCPTransport is a transport that communicates with peers over TCP.
 type TCPTransport struct {
@@ -37,15 +38,28 @@ func (tp *TCPPeer) Send(payload []byte) error {
 	return nil
 }
 
-func (tp *TCPPeer) readLoop(rpcChannel chan ReceiveRPC) {
+func (tp *TCPPeer) readLoop(rpcChannel chan ReceiveRPC, removePeerChannel chan *TCPPeer) {
+	fail_count := 0
+
 	for {
 		buf := make([]byte, TCP_BUFFER_SIZE)
 		n, err := tp.conn.Read(buf)
 		if err != nil {
+			if fail_count >= FAIL_COUNT_LIMIT {
+				fmt.Println("Closing connection with", tp.conn.RemoteAddr())
+				tp.conn.Close()
+
+				// tell the node to remove this peer
+				removePeerChannel <- tp
+
+				// return to stop the loop
+				return
+			}
 			fmt.Println("Error with connection:", tp.conn.RemoteAddr())
 			fmt.Println("Error reading from connection:", err)
 			// Wait 5 seconds before retrying
 			time.Sleep(5 * time.Second)
+			fail_count++
 			continue
 		}
 
