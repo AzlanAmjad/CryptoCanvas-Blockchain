@@ -19,6 +19,7 @@ type BlockHeader struct {
 	DataHash      types.Hash // transactions merkle root hash, used to verify the integrity of the transactions
 	Timestamp     int64
 	Index         uint32
+	Nonce         uint64
 }
 
 // GetBytes returns the bytes of the block header.
@@ -63,6 +64,7 @@ func NewBlock() *Block {
 			DataHash:      types.Hash{},
 			Timestamp:     time.Now().UnixNano(),
 			Index:         0,
+			Nonce:         0,
 		},
 		Transactions: []*Transaction{},
 		Validator:    crypto.PublicKey{},
@@ -118,7 +120,8 @@ func (b *Block) VerifySignature() (bool, error) {
 		// invalid signature, and transaction is not from coinbase account
 		// coinbase account initiated transactions are not signed, therefor not verified
 		// TODO: this is not a secure method of creating coinbase transactions, must find a better way
-		if valid, err := tx.VerifySignature(); !valid && tx.From != *GetCoinbaseAccount() {
+		pub_key, _ := GetCoinbaseAccount()
+		if valid, err := tx.VerifySignature(); !valid && tx.From != *pub_key {
 			return false, err
 		}
 	}

@@ -2,6 +2,8 @@ package core
 
 import "fmt"
 
+const BLOCKS_TOO_HIGH_RESYNC_FORK = 6 // must be 1 higher than BLOCKS_TOO_HIGH_THRESHOLD
+
 type Validator interface {
 	ValidateBlock(block *Block) (int, error)
 }
@@ -26,6 +28,7 @@ func NewBlockValidator(bc *Blockchain) *BlockValidator {
 // 6: block index is lower than blockchain height
 // 7: previous hash is invalid
 // 8: data hash is invalid
+// 9: block hash is invalid
 func (bv *BlockValidator) ValidateBlock(block *Block) (int, error) {
 	// 1. check if the block is nil
 	if block == nil {
@@ -78,6 +81,10 @@ func (bv *BlockValidator) ValidateBlock(block *Block) (int, error) {
 				dataHash,
 			)
 		}
+	}
+	// 9. check if the block hash has been solved by mining node
+	if !bv.BC.IsBlockHashValid(block.GetHash(bv.BC.BlockHeaderHasher)) {
+		return 9, fmt.Errorf("block hash is invalid, block index: %d, blockchain height: %d", block.Header.Index, bv.BC.GetHeight())
 	}
 	return 0, nil
 }

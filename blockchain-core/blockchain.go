@@ -11,6 +11,8 @@ import (
 	"github.com/go-kit/log"
 )
 
+const BLOCK_MINING_DIFFICULTY = 2 // indicates how many leading zeros the block hash should have
+
 type Blockchain struct {
 	ID string
 	// should never be used outside a blockchain function
@@ -70,7 +72,7 @@ func NewBlockchain(storage Storage, genesis *Block, ID string, mempool *TxPool) 
 	bc.Logger.Log(
 		"msg", "blockchain created",
 		"blockchain_id", bc.ID,
-		"genesis_block_hash", genesis.GetHash(bc.BlockHeaderHasher),
+		"genesis_block_has h", genesis.GetHash(bc.BlockHeaderHasher),
 	)
 
 	return bc, err
@@ -106,6 +108,10 @@ func (bc *Blockchain) addBlockWithoutValidation(block *Block) error {
 			}
 		default:
 			fmt.Println("Unknown transaction type")
+		}
+		// remove this transaction from the mempool if it exists
+		if bc.memPool != nil {
+			bc.memPool.RemoveFromPending(tx)
 		}
 	}
 
@@ -192,7 +198,8 @@ func (bc *Blockchain) HandleCryptoTransferTransaction(tx *Transaction, block *Bl
 
 	// if this is the coinbase account sending to itself, we will just add the amount to the account
 	// this means that the coinbase account is making coins out of thin air / increasing the supply
-	if tx.From.GetAddress() == GetCoinbaseAccount().GetAddress() && crypto_transfer_tx.To.GetAddress() == GetCoinbaseAccount().GetAddress() {
+	pub_key, _ := GetCoinbaseAccount()
+	if tx.From.GetAddress() == pub_key.GetAddress() && crypto_transfer_tx.To.GetAddress() == pub_key.GetAddress() {
 		bc.AccountStates.AddBalance(tx.From.GetAddress(), crypto_transfer_tx.Amount)
 		bc.Logger.Log("msg", "Coinbase account minted coins", "amount", crypto_transfer_tx.Amount)
 	} else {
@@ -330,11 +337,34 @@ func (bc *Blockchain) GetTransactionByHash(hash types.Hash) (*Transaction, error
 	return tx, nil
 }
 
+func (bc *Blockchain) IsBlockHashValid(hash types.Hash) bool {
+	// check if the hash has BLOCK_MINING_DIFFICULTY leading zeros
+	for i := 0; i < BLOCK_MINING_DIFFICULTY; i++ {
+		if hash[i] != 0 {
+			return false
+		}
+	}
+	return true
+}
+
+var coinbase_account_pub *crypto.PublicKey
+var coinbase_account_priv *crypto.PrivateKey
+
 // generate a coinbase account for this blockchain
-func GetCoinbaseAccount() *crypto.PublicKey {
+func GetCoinbaseAccount() (*crypto.PublicKey, *crypto.PrivateKey) {
 	// generate a static public key for the coinbase account
 	// this key will be used to mint the initial coins
 	// this key generation is done on another elliptic curve
 
-	return &crypto.PublicKey{}
+	// check if coinbase account is already generated
+	if coinbase_account_priv != nil && coinbase_account_pub != nil {
+		return coinbase_account_pub, coinbase_account_priv
+	}
+
+	// generate a new private key
+	privateKey := crypto.GeneratePrivateKey()
+	// generate the public key from the private key
+	publicKey := privateKey.GetPublicKey()
+
+	return &publicKey, &privateKey
 }

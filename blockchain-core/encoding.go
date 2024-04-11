@@ -219,34 +219,16 @@ func (e *TransactionEncoder) Encode(w io.Writer, t *Transaction) error {
 		return err
 	}
 
-	// Encode if there is a public key
-	public_key_exists := t.From.Key != nil
-	err = enc.Encode(public_key_exists)
+	// Encode the public key
+	err = EncodePublicKey(enc, t.From.Key)
 	if err != nil {
 		return err
 	}
 
-	if public_key_exists {
-		// Encode the public key
-		err = EncodePublicKey(enc, t.From.Key)
-		if err != nil {
-			return err
-		}
-	}
-
-	// encode if the signature exists
-	signature_exists := t.Signature != nil
-	err = enc.Encode(signature_exists)
+	// encode the signature
+	err = enc.Encode(t.Signature)
 	if err != nil {
 		return err
-	}
-
-	if signature_exists {
-		// encode the signature
-		err = enc.Encode(t.Signature)
-		if err != nil {
-			return err
-		}
 	}
 
 	// encode the first seen timestamp
@@ -285,34 +267,16 @@ func (d *TransactionDecoder) Decode(r io.Reader, t *Transaction) error {
 		return err
 	}
 
-	// Decode if there is a public key
-	var public_key_exists bool
-	err = dec.Decode(&public_key_exists)
+	// Decode the public key
+	t.From.Key, err = DecodePublicKey(dec)
 	if err != nil {
 		return err
 	}
 
-	if public_key_exists {
-		// Decode the public key
-		t.From.Key, err = DecodePublicKey(dec)
-		if err != nil {
-			return err
-		}
-	}
-
-	// decode if the signature exists
-	var signature_exists bool
-	err = dec.Decode(&signature_exists)
+	// Decode the signature
+	err = dec.Decode(&t.Signature)
 	if err != nil {
 		return err
-	}
-
-	if signature_exists {
-		// Decode the signature
-		err = dec.Decode(&t.Signature)
-		if err != nil {
-			return err
-		}
 	}
 
 	// Decode the first seen timestamp
@@ -320,6 +284,8 @@ func (d *TransactionDecoder) Decode(r io.Reader, t *Transaction) error {
 	if err != nil {
 		return err
 	}
+
+	fmt.Print("SUCCESS 8")
 
 	return nil
 }

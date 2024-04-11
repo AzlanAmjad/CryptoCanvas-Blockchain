@@ -29,6 +29,14 @@ func NewTxPool(maxLength int) *TxPool {
 	}
 }
 
+func (t *TxPool) RemoveFromPending(tx *Transaction) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	hash := tx.GetHash(NewTransactionHasher())
+	delete(t.Pending.transactions, hash)
+}
+
 func (t *TxPool) Add(tx *Transaction) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()

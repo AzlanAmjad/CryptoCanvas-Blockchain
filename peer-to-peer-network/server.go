@@ -56,6 +56,7 @@ type Server struct {
 	peerChannel       chan *TCPPeer
 	removePeerChannel chan *TCPPeer
 	quitChannel       chan bool
+	blockReceived     chan *core.Block
 	Chain             *core.Blockchain
 	// count of blocks that are sent to us that are too high for our chain
 	// used for syncing the blockchain with the peer in processBlock
@@ -112,6 +113,7 @@ func NewServer(options ServerOptions) (*Server, error) {
 		peerChannel:           peerCh,
 		removePeerChannel:     make(chan *TCPPeer),
 		quitChannel:           make(chan bool),
+		blockReceived:         make(chan *core.Block),
 		Chain:                 bc,
 		blocks_too_high_count: 0,
 	}
@@ -259,7 +261,7 @@ func (s *Server) Start() error {
 func (s *Server) validatorLoop() {
 	s.ServerOptions.Logger.Log("msg", "Starting validator loop", "server_id", s.ServerOptions.ID)
 
-	// Create a ticker to create a new block every block time.
+	// Create a ticker to mine a new block every block time.
 	ticker := time.NewTicker(s.ServerOptions.BlockTime)
 	for {
 		select {
@@ -431,6 +433,11 @@ func (s *Server) processBlock(from net.Addr, block *core.Block) error {
 		// which is possibly why we are in this error condition, then we
 		// have already broadcasted the block to our peers previously.
 		return err
+	}
+
+	if s.isValidator { // we are trying to mine blocks
+		// send over the block received channel to whoever wishes to be informed
+		s.blockReceived <- block
 	}
 
 	// broadcast the block to the network (all peers)
@@ -678,6 +685,10 @@ func (s *Server) processBlocks(from net.Addr, blocksMsg *core.BlocksMessage) err
 		if err != nil {
 			return err // if addition of a block fails we will return, no need to continue
 		}
+		if s.isValidator { // we are trying to mine blocks
+			// send over the block received channel to whoever wishes to be informed
+			s.blockReceived <- block
+		}
 	}
 
 	return nil
@@ -729,10 +740,18 @@ func (s *Server) createNewBlock() error {
 	block.Header.Index = s.Chain.GetHeight() + 1
 	// TODO (Azlan): update other block parameters so that this block is not marked as invalid.
 
+	// mine the block
+	nonce := s.Mine(*block)
+	block.Header.Nonce = nonce
+
 	// sign the block as a validator of this block
 	err = block.Sign(s.ServerOptions.PrivateKey)
 	if err != nil {
 		return err
+	}
+
+	if block == nil {
+		return fmt.Errorf("block is nil after mining")
 	}
 
 	// add the block to the blockchain
@@ -742,7 +761,8 @@ func (s *Server) createNewBlock() error {
 		// so that they can be included in the next block.
 		for _, tx := range transactions {
 			// if it is not the coinbase transaction
-			if tx.From != *core.GetCoinbaseAccount() {
+			pub_key, _ := core.GetCoinbaseAccount()
+			if tx.From != *pub_key {
 				s.memPool.Add(tx)
 			}
 		}
@@ -756,6 +776,41 @@ func (s *Server) createNewBlock() error {
 	go s.broadcastBlock(nil, block)
 
 	return nil
+}
+
+// mine the block
+func (s *Server) Mine(block core.Block) uint64 {
+	s.ServerOptions.Logger.Log("msg", "Mining block", "index", block.Header.Index)
+	// start with a Nonce of 0
+	block.Header.Nonce = 0
+	// start a forever loop, calculate hash of the block,
+	// if the has is a valid block hash then quit, if not then increment the
+	// Nonce and try again.
+	for {
+		// calculate the hash of the block
+		hash := block.GetHash(s.Chain.BlockHeaderHasher)
+		// check if the hash is valid
+		if s.Chain.IsBlockHashValid(hash) {
+			// if the hash is valid, break the loop
+			break
+		}
+		// increment the Nonce
+		block.Header.Nonce++
+		// check if we received a block from the network
+		select {
+		case new_block := <-s.blockReceived:
+			// if we received a block from the network, we need to stop mining if it has the
+			// same index as our block
+			if new_block.Header.Index == block.Header.Index {
+				return 0
+			}
+		default:
+			// if we did not receive a block from the network, continue mining
+		}
+	}
+
+	s.ServerOptions.Logger.Log("msg", "Block mined", "index", block.Header.Index, "nonce", block.Header.Nonce)
+	return block.Header.Nonce
 }
 
 // genesisBlock creates the first block in the blockchain.
@@ -775,7 +830,8 @@ func genesisBlock() *core.Block {
 }
 
 func GetCoinbaseTx(amount types.CurrencyAmount) core.Transaction {
-	coinbase_account := core.GetCoinbaseAccount()
+	pub_key, priv_key := core.GetCoinbaseAccount()
+	coinbase_account := pub_key
 	if coinbase_account == nil {
 		logrus.Fatal("Failed to get coinbase account")
 		panic("Failed to get coinbase account")
@@ -796,11 +852,13 @@ func GetCoinbaseTx(amount types.CurrencyAmount) core.Transaction {
 	tx := core.NewTransaction(buf.Bytes())
 	tx.Type = core.TxCryptoTransfer
 	tx.From = *coinbase_account
+	tx.Sign(priv_key)
 	return *tx
 }
 
 func GetRewardCoinbaseTx(to *crypto.PublicKey, amount types.CurrencyAmount) core.Transaction {
-	coinbase_account := core.GetCoinbaseAccount()
+	pub_key, priv_key := core.GetCoinbaseAccount()
+	coinbase_account := pub_key
 	if coinbase_account == nil {
 		logrus.Fatal("Failed to get coinbase account")
 		panic("Failed to get coinbase account")
@@ -821,5 +879,6 @@ func GetRewardCoinbaseTx(to *crypto.PublicKey, amount types.CurrencyAmount) core
 	tx := core.NewTransaction(buf.Bytes())
 	tx.Type = core.TxCryptoTransfer
 	tx.From = *coinbase_account
+	tx.Sign(priv_key)
 	return *tx
 }

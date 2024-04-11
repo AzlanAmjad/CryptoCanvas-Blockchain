@@ -33,6 +33,7 @@ func tcpTesterTransactionSender() {
 	}
 
 	// send mint transactions to the API
+
 	for i := 0; i < 20; i++ {
 		msg := makeMintTransactionMessage(privateKey, collection_hash)
 		_, err := client.Post("http://localhost:8080/transaction", "application/octet-stream", bytes.NewReader(msg))
@@ -44,6 +45,7 @@ func tcpTesterTransactionSender() {
 	}
 
 	// send crypto transfer transaction to the API
+
 	for i := 0; i < 20; i++ {
 		msg := makeCryptoTransferTransactionMessage(privateKey, toPrivateKey)
 		_, err := client.Post("http://localhost:8080/transaction", "application/octet-stream", bytes.NewReader(msg))
@@ -53,6 +55,7 @@ func tcpTesterTransactionSender() {
 		// wait for a bit
 		time.Sleep(1000 * time.Millisecond)
 	}
+
 }
 
 func makeCollectionTransactionMessage(privateKey crypto.PrivateKey) ([]byte, types.Hash) {

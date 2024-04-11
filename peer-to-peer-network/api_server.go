@@ -58,6 +58,7 @@ type JSONBlock struct {
 	Validator     string
 	Signature     *crypto.Signature
 	Transactions  JSONTransactions
+	Nonce         uint64
 }
 
 // NewServer creates a new Server
@@ -188,6 +189,7 @@ func (s *APIServer) CreateJSONBlock(block *core.Block) *JSONBlock {
 		DataHash:      block.Header.DataHash.String(),
 		Timestamp:     time.Unix(0, block.Header.Timestamp),
 		Index:         block.Header.Index,
+		Nonce:         block.Header.Nonce,
 	}
 
 	if block.Validator.Key != nil {
